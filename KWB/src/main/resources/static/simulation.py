@@ -619,6 +619,9 @@ def main(argv):
             raise ValueError("입력 파일 경로가 필요합니다: py simulation.py input.json")
         with open(argv[1], encoding="utf-8") as f:
             result = run(json.load(f))
+    except ValueError as e:  # 입력 오류 → 종료 코드 2 (Java 에서 400 으로 응답)
+        print(json.dumps({"error": str(e)}, ensure_ascii=False), flush=True)
+        return 2
     except Exception as e:  # Java 쪽에서 메시지를 보여줄 수 있도록 JSON 으로 출력
         print(json.dumps({"error": str(e)}, ensure_ascii=False), flush=True)
         return 1

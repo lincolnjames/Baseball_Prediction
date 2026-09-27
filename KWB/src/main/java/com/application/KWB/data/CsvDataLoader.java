@@ -35,6 +35,7 @@ public class CsvDataLoader implements ApplicationRunner {
 		{ "hitters", "hitters.csv" },
 		{ "pitchers", "pitchers.csv" },
 		{ "schedule", "schedule.csv" },
+		{ "positions", "positions.csv" },  // 선택: 없으면 건너뜀
 	};
 
 	private final JdbcTemplate jdbcTemplate;
@@ -49,6 +50,10 @@ public class CsvDataLoader implements ApplicationRunner {
 	public void run(ApplicationArguments args) throws IOException {
 		for (String[] table : TABLES) {
 			Resource csv = resolve(table[1]);
+			if (!csv.exists()) {
+				log.info("{} 파일이 없어 {} 테이블을 비워 둡니다", table[1], table[0]);
+				continue;
+			}
 			int count = load(table[0], csv);
 			log.info("{} 테이블에 {}건 적재 ({})", table[0], count, csv.getDescription());
 		}

@@ -158,6 +158,36 @@ class ScheduleTest(unittest.TestCase):
         self.assertIn("KT", problems[0])
 
 
+DEFENSE = [
+    "1\t가타자\tKT\t2루수\t90\t85\t700\t5\t0\t150\t250\t50\t0.988\t0\t0\t0\t-",
+    "2\t나타자\tKT\t포수\t60\t50\t400 1/3\t2\t0\t300\t20\t2\t0.994\t3\t30\t10\t25.0",
+    "2\t나타자\tKT\t1루수\t5\t2\t20\t0\t0\t15\t1\t1\t1.000\t0\t0\t0\t-",   # 같은 순위, 다른 포지션
+    "3\t라투수\tKT\t투수\t20\t20\t120\t1\t0\t5\t10\t0\t0.938\t0\t0\t0\t-",   # 투수는 제외
+    "4\t다투수\tKT\t좌익수\t1\t0\t1\t0\t0\t0\t0\t0\t-\t0\t0\t0\t-",          # 타석 없는 선수는 제외
+]
+
+
+class PositionsTest(unittest.TestCase):
+
+    def test_defense_rows_become_positions_for_hitters(self):
+        folder = complete_folder(**{"defense.txt": DEFENSE})
+        hitters, _, problems, _ = ki.build(folder, 2026)
+        positions, position_problems, notes = ki.build_positions(folder, 2026, hitters)
+
+        self.assertEqual(problems + position_problems, [])
+        self.assertEqual(sorted((p["Player"], p["POS"], p["GS"], p["INN"]) for p in positions), [
+            ("가타자", "2루수", "85", "700.0"), ("나타자", "1루수", "2", "20.0"), ("나타자", "포수", "50", "400.1")])
+        self.assertEqual(notes, [])
+
+    def test_fielding_percentage_typo_is_caught(self):
+        wrong = [DEFENSE[0].replace("0.988", "0.978")]
+        folder = complete_folder(**{"defense.txt": wrong})
+        hitters, _, _, _ = ki.build(folder, 2026)
+        _, problems, _ = ki.build_positions(folder, 2026, hitters)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("수비율", problems[0])
+
+
 class SimulationWithRawCountsTest(unittest.TestCase):
 
     def test_exact_rates_are_used_when_raw_counts_exist(self):

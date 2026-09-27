@@ -7,6 +7,7 @@
 DROP TABLE IF EXISTS hitters;
 DROP TABLE IF EXISTS pitchers;
 DROP TABLE IF EXISTS schedule;
+DROP TABLE IF EXISTS positions;
 
 CREATE TABLE hitters (
     id        INT AUTO_INCREMENT PRIMARY KEY,
@@ -89,4 +90,17 @@ CREATE TABLE schedule (
     home_team  VARCHAR(20)  NOT NULL,
     away_team  VARCHAR(20)  NOT NULL,
     INDEX idx_schedule_date (date)
+) DEFAULT CHARSET = utf8mb4;
+
+-- 수비 포지션별 출장 (선택: 데이터 폴더에 positions.csv 가 있을 때만 채워진다)
+CREATE TABLE positions (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    year       INT          NOT NULL,
+    team       VARCHAR(20)  NOT NULL,
+    player     VARCHAR(50)  NOT NULL,
+    pos        VARCHAR(10)  NOT NULL,
+    g          INT,
+    gs         INT,           -- 해당 포지션 선발 출장
+    inn        DECIMAL(6,1),  -- 수비 이닝 (야구식 표기)
+    INDEX idx_positions_team (team)
 ) DEFAULT CHARSET = utf8mb4;

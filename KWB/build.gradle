@@ -39,4 +39,6 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	// 테스트도 시작 시 테이블을 다시 만들므로, 실행 중인 앱의 DB(KWB)를 건드리지 않게 별도 DB 를 쓴다
+	environment 'DB_NAME', System.getenv('DB_NAME') ?: 'kwb_test'
 }

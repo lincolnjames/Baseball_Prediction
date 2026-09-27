@@ -71,6 +71,65 @@ class SimulationControllerTests {
 		verify(simulationService, never()).runSimulation(any());
 	}
 
+	private static final String SCENARIO_LINEUP = """
+		[{"name":"a","pos":"포수"},{"name":"b","pos":"1루수"},{"name":"c","pos":"2루수"},
+		 {"name":"d","pos":"3루수"},{"name":"e","pos":"유격수"},{"name":"f","pos":"좌익수"},
+		 {"name":"g","pos":"중견수"},{"name":"h","pos":"우익수"},{"name":"i","pos":"지명타자"}]""";
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void scenarioPassesModeTeamsAndLineupWithPositions() throws Exception {
+		when(simulationService.runScenario(any())).thenReturn(Map.of("expected_home", 0.55));
+
+		String body = """
+			{"mode":"predict","homeTeam":"두산","awayTeam":"NC",
+			 "home":{"starter":"곽빈","lineup":%s},
+			 "away":{"starter":"구창모","lineup":%s}}
+			""".formatted(SCENARIO_LINEUP, SCENARIO_LINEUP);
+
+		mockMvc.perform(post("/simulation/scenario").contentType(MediaType.APPLICATION_JSON).content(body))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.expected_home").value(0.55));
+
+		ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+		verify(simulationService).runScenario(captor.capture());
+		Map<String, Object> input = captor.getValue();
+		Map<String, Object> home = (Map<String, Object>) input.get("home");
+		List<Map<String, String>> lineup = (List<Map<String, String>>) home.get("lineup");
+
+		assertThat(input).containsEntry("mode", "predict");
+		assertThat(home).containsEntry("team", "두산").containsEntry("starter", "곽빈");
+		assertThat(lineup).hasSize(9).first().isEqualTo(Map.of("name", "a", "pos", "포수"));
+	}
+
+	@Test
+	void scenarioRejectsUnknownMode() throws Exception {
+		String body = """
+			{"mode":"guess","homeTeam":"두산","awayTeam":"NC",
+			 "home":{"starter":"곽빈","lineup":%s},"away":{"starter":"구창모","lineup":%s}}
+			""".formatted(SCENARIO_LINEUP, SCENARIO_LINEUP);
+
+		mockMvc.perform(post("/simulation/scenario").contentType(MediaType.APPLICATION_JSON).content(body))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.message").value("mode 는 analyze 또는 predict 여야 합니다."));
+		verify(simulationService, never()).runScenario(any());
+	}
+
+	@Test
+	void scriptInputErrorsBecomeBadRequestWithMessage() throws Exception {
+		when(simulationService.runScenario(any()))
+			.thenThrow(new IllegalArgumentException("home 수비 포지션이 비었습니다: 포수"));
+
+		String body = """
+			{"homeTeam":"두산","awayTeam":"NC",
+			 "home":{"starter":"곽빈","lineup":%s},"away":{"starter":"구창모","lineup":%s}}
+			""".formatted(SCENARIO_LINEUP, SCENARIO_LINEUP);
+
+		mockMvc.perform(post("/simulation/scenario").contentType(MediaType.APPLICATION_JSON).content(body))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.message").value("home 수비 포지션이 비었습니다: 포수"));
+	}
+
 	@Test
 	void rejectsMissingStarter() throws Exception {
 		String body = """

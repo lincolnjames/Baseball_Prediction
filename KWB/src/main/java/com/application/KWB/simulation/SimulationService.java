@@ -1,75 +1,96 @@
 package com.application.KWB.simulation;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.*;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
-import java.util.*;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+/**
+ * Python 스크립트(static/simulation.py, static/scenario.py)를 실행하고 결과 JSON 을 돌려준다.
+ * 입력은 요청마다 임시 파일로 넘겨 동시 요청끼리 섞이지 않게 한다.
+ */
 @Service
 public class SimulationService {
 
-    private final String dataDir;
+	private static final Logger log = LoggerFactory.getLogger(SimulationService.class);
 
-    public SimulationService(@Value("${kwb.data-dir:}") String dataDir) {
-        this.dataDir = dataDir;
-    }
+	/** 스크립트가 입력 오류(ValueError)로 끝났을 때의 종료 코드 */
+	private static final int EXIT_INVALID_INPUT = 2;
 
-    public Map<String, Object> runSimulation(Map<String, Object> simInput) throws IOException {
-        // DB 에 적재한 것과 같은 선수 기록을 쓰도록 데이터 폴더를 넘긴다 (비어 있으면 simulation.py 기본 데이터)
-        if (dataDir != null && !dataDir.isBlank()) {
-            simInput.put("data_dir", Path.of(dataDir).toAbsolutePath().toString());
-        }
-        ObjectMapper mapper = new ObjectMapper();
-        String inputJson = mapper.writeValueAsString(simInput);
+	private final ObjectMapper mapper = new ObjectMapper();
+	private final String dataDir;
 
-        String currentDir = System.getProperty("user.dir");
-        File workingDir = new File(currentDir, "src/main/resources/static");
+	public SimulationService(@Value("${kwb.data-dir:}") String dataDir) {
+		this.dataDir = dataDir;
+	}
 
-        File jsonFile = new File(workingDir, "input.json");
-        try (Writer fw = new OutputStreamWriter(new FileOutputStream(jsonFile), StandardCharsets.UTF_8)) {
-            fw.write(inputJson);
-        }
+	public Map<String, Object> runSimulation(Map<String, Object> input) throws IOException {
+		return run("simulation.py", input);
+	}
 
-        // 3. 파이썬 실행 명령어: workingDir을 작업 디렉토리로 지정
-        List<String> command = Arrays.asList(
-            "py", "simulation.py", "input.json"
-        );
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(workingDir);
-        pb.redirectErrorStream(true);
+	public Map<String, Object> runScenario(Map<String, Object> input) throws IOException {
+		return run("scenario.py", input);
+	}
 
-        // 3. 명령어와 input.json 내용 로그
-        System.out.println("실행 명령어: " + String.join(" ", command));
-        System.out.println("input.json 내용: " + inputJson);
+	private Map<String, Object> run(String script, Map<String, Object> input) throws IOException {
+		// DB 에 적재한 것과 같은 선수 기록을 쓰도록 데이터 폴더를 넘긴다 (비어 있으면 스크립트 기본 데이터)
+		if (dataDir != null && !dataDir.isBlank()) {
+			input.put("data_dir", Path.of(dataDir).toAbsolutePath().toString());
+		}
+		File workingDir = new File(System.getProperty("user.dir"), "src/main/resources/static");
+		Path inputFile = Files.createTempFile("kwb-" + script.replace(".py", "") + "-", ".json");
+		try {
+			Files.writeString(inputFile, mapper.writeValueAsString(input), StandardCharsets.UTF_8);
+			ProcessBuilder pb = new ProcessBuilder(List.of("py", script, inputFile.toString()));
+			pb.directory(workingDir);
+			pb.redirectErrorStream(true);
 
-        // 4. 파이썬 프로세스 실행 및 표준출력 읽기
-        Process process = pb.start();
+			long started = System.currentTimeMillis();
+			Process process = pb.start();
+			String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+			int exitCode = waitFor(process);
+			log.info("{} 종료 코드 {} ({}ms)", script, exitCode, System.currentTimeMillis() - started);
 
-        BufferedReader reader = new BufferedReader(
-            new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
-        );
-        StringBuilder output = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            System.out.println("[PYTHON] " + line); // 실시간 로그
-            output.append(line).append("\n");
-        }
+			if (exitCode == EXIT_INVALID_INPUT) {
+				throw new IllegalArgumentException(errorMessage(output));
+			}
+			if (exitCode != 0) {
+				throw new IOException(script + " 실행 실패: " + output);
+			}
+			return mapper.readValue(output, new TypeReference<>() {
+			});
+		} finally {
+			Files.deleteIfExists(inputFile);
+		}
+	}
 
-        try {
-            int exitCode = process.waitFor();
-            System.out.println("파이썬 종료 코드: " + exitCode);
-            if (exitCode != 0) {
-                throw new IOException("Python process failed: " + output.toString().trim());
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Process interrupted", e);
-        }
+	private static int waitFor(Process process) throws IOException {
+		try {
+			return process.waitFor();
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IOException("Python 프로세스 대기 중 중단됨", e);
+		}
+	}
 
-        // 5. 결과(JSON)를 Map으로 변환해 반환
-        return mapper.readValue(output.toString(), Map.class);
-    }
+	private String errorMessage(String output) {
+		try {
+			Object error = mapper.readValue(output, new TypeReference<Map<String, Object>>() {
+			}).get("error");
+			return error != null ? error.toString() : output;
+		} catch (IOException e) {
+			return output;
+		}
+	}
 }

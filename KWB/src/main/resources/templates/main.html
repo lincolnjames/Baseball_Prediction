@@ -303,11 +303,14 @@ document.addEventListener('DOMContentLoaded', function () {
 	          html += `<div class="game-date">${gameDate.date}</div>`;
 
 	          gameDate.games.forEach(function(game) {
-				const detailUrl = `/match/detail?hometeam=${encodeURIComponent(game.hometeam)}&awayteam=${encodeURIComponent(game.awayteam)}`;
+				const query = `hometeam=${encodeURIComponent(game.hometeam)}&awayteam=${encodeURIComponent(game.awayteam)}`;
+				const detailUrl = `/match/detail?${query}`;
+	            // KBO 표기 관례대로 원정 vs 홈
 	            html += `<div class="game-row">`;
-	            html += `<a href="${detailUrl}"><div class="team-block">${game.hometeam}</div></a>`;
-	            html += `<div class="vs">vs</div>`;
 	            html += `<a href="${detailUrl}"><div class="team-block">${game.awayteam}</div></a>`;
+	            html += `<div class="vs">vs</div>`;
+	            html += `<a href="${detailUrl}"><div class="team-block">${game.hometeam} (홈)</div></a>`;
+	            html += `<a class="prediction" href="/match/predict?${query}">예측</a>`;
 	            html += `</div>`;
 	          });
 

@@ -58,6 +58,16 @@ public class MatchServiceImpl implements MatchService{
 		return matchDAO.getPitcherByTeam(awayTeam);
 	}
 
+	@Override
+	public Map<String, Object> getPredictionRoster(String teamName) {
+		Map<String, Object> roster = new LinkedHashMap<>();
+		roster.put("team", teamName);
+		roster.put("hitters", matchDAO.getLineupCandidates(teamName));
+		roster.put("pitchers", matchDAO.getPitchingStaff(teamName));
+		roster.put("positions", matchDAO.getPositions(teamName));
+		return roster;
+	}
+
 	
 
 }

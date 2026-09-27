@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>승부 예측</title>
+<style>
+  body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f7f9fc; margin: 0; padding: 20px; color: #1f2937; }
+  a { color: #2563eb; }
+  h1 { text-align: center; margin: 8px 0 4px; }
+  .lead { text-align: center; color: #6b7280; margin: 0 0 24px; font-size: 14px; }
+  .teams { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+  .team { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px 20px; width: min(520px, 100%);
+          box-sizing: border-box; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+  .team h2 { margin: 0 0 12px; font-size: 20px; }
+  .team label { font-size: 13px; color: #6b7280; }
+  .team select { font-size: 14px; padding: 4px; max-width: 100%; }
+  .starter select { width: 100%; margin: 4px 0 12px; }
+  table.lineup { width: 100%; border-collapse: collapse; }
+  table.lineup td { padding: 3px 2px; }
+  table.lineup td:first-child { width: 28px; text-align: center; color: #6b7280; }
+  table.lineup select.pos { width: 90px; }
+  table.lineup select.player { width: 100%; }
+  .team-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button { cursor: pointer; border: none; border-radius: 8px; padding: 8px 14px; font-size: 14px; }
+  .small { background: #e5e7eb; }
+  .actions { display: flex; justify-content: center; gap: 12px; margin: 24px 0; flex-wrap: wrap; }
+  .primary { background: #2563eb; color: #fff; font-size: 16px; padding: 12px 24px; font-weight: bold; }
+  .secondary { background: #059669; color: #fff; font-size: 16px; padding: 12px 24px; font-weight: bold; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  #result { max-width: 1060px; margin: 0 auto; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .prob { display: flex; height: 36px; border-radius: 8px; overflow: hidden; font-weight: bold; color: #fff; margin: 8px 0; }
+  .prob div { display: flex; align-items: center; padding: 0 12px; white-space: nowrap; }
+  .prob .away { background: #6b7280; }
+  .prob .home { background: #2563eb; justify-content: flex-end; }
+  .muted { color: #6b7280; font-size: 13px; }
+  table.effects { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.effects th, table.effects td { border-bottom: 1px solid #eef0f3; padding: 6px 4px; text-align: left; }
+  .up { color: #059669; font-weight: bold; }
+  .down { color: #dc2626; font-weight: bold; }
+  .error { color: #dc2626; font-weight: bold; }
+  .warn { color: #b45309; }
+</style>
+</head>
+<body th:data-home-team="${homeTeam}" th:data-away-team="${awayTeam}">
+
+<a href="/">← 경기 목록</a>
+<h1 th:text="${awayTeam} + ' (원정) vs ' + ${homeTeam} + ' (홈)'">승부 예측</h1>
+<p class="lead">예고 선발과 예상 라인업으로 <b>시나리오 분석</b>을 하고, 라인업이 발표되면 실제 라인업으로 <b>확정 예측</b>을 하세요.</p>
+
+<div class="teams">
+  <section class="team" id="team-away"></section>
+  <section class="team" id="team-home"></section>
+</div>
+
+<div class="actions">
+  <button class="primary" id="analyzeBtn" type="button">시나리오 분석 (라인업 발표 전)</button>
+  <button class="secondary" id="predictBtn" type="button">확정 예측 (발표된 라인업)</button>
+</div>
+
+<div id="result"></div>
+
+<script th:inline="javascript">
+  const DATA = /*[[${predictData}]]*/ {};
+</script>
+<script>
+const FIELD_POSITIONS = ['포수', '1루수', '2루수', '3루수', '유격수', '좌익수', '중견수', '우익수'];
+const POSITIONS = [...FIELD_POSITIONS, '지명타자'];
+const SIDE_LABEL = { home: '홈', away: '원정' };
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text == null ? '' : String(text);
+  return div.innerHTML;
+}
+function rate(value) { return value == null ? '-' : Number(value).toFixed(3).replace(/^0/, ''); }
+function pct(value) { return (value * 100).toFixed(1) + '%'; }
+function pp(value) { return (value >= 0 ? '+' : '') + (value * 100).toFixed(1) + '%p'; }
+
+// 팀별 포지션 선발 출장 수: 선수 → {포지션: GS}
+const gsByPlayer = {};
+for (const side of ['home', 'away']) {
+  gsByPlayer[side] = {};
+  for (const p of DATA[side].positions) {
+    (gsByPlayer[side][p.player] ||= {})[p.pos] = Number(p.gs);
+  }
+}
+const hasPositions = side => DATA[side].positions.length > 0;
+
+function playerLabel(side, h) {
+  const gs = Object.entries(gsByPlayer[side][h.player] || {}).sort((a, b) => b[1] - a[1]).slice(0, 2)
+    .map(([pos, n]) => pos + ' ' + n).join(', ');
+  return `${h.player}  (${rate(h.avg)} / ${rate(h.obp)} / ${rate(h.slg)}${gs ? ' · ' + gs : ''})`;
+}
+
+// 포지션을 많이 맡은 선수가 위로, 나머지는 타석 순
+function sortedHitters(side, pos) {
+  const hitters = DATA[side].hitters;
+  if (pos === '지명타자' || !hasPositions(side)) return hitters;
+  const gs = h => (gsByPlayer[side][h.player] || {})[pos] || 0;
+  return [...hitters].sort((a, b) => gs(b) - gs(a) || b.pa - a.pa);
+}
+
+function fillPlayerOptions(side, row) {
+  const pos = row.querySelector('.pos').value;
+  const select = row.querySelector('.player');
+  const current = select.value;
+  select.innerHTML = '<option value="">선수 선택</option>' + sortedHitters(side, pos)
+    .map(h => `<option value="${escapeHtml(h.player)}">${escapeHtml(playerLabel(side, h))}</option>`).join('');
+  select.value = current;
+}
+
+function renderTeam(side) {
+  const roster = DATA[side];
+  const section = document.getElementById('team-' + side);
+  const pitchers = roster.pitchers.map(p =>
+    `<option value="${escapeHtml(p.player)}">${escapeHtml(`${p.player} (ERA ${p.era ?? '-'}, ${p.g}경기 ${p.ip}이닝)`)}</option>`).join('');
+  const rows = POSITIONS.map((_, i) => `
+    <tr data-order="${i + 1}">
+      <td>${i + 1}</td>
+      <td><select class="pos">${POSITIONS.map(p => `<option>${p}</option>`).join('')}</select></td>
+      <td><select class="player"></select></td>
+    </tr>`).join('');
+  section.innerHTML = `
+    <h2>${escapeHtml(roster.team)} <span class="muted">(${SIDE_LABEL[side]})</span></h2>
+    <div class="starter"><label>선발투수</label>
+      <select class="starter-select"><option value="">선발 선택</option>${pitchers}</select></div>
+    <label>타순 · 포지션 · 선수 <span class="muted">(타율 / 출루율 / 장타율 · 포지션 선발 수)</span></label>
+    <table class="lineup">${rows}</table>
+    <div class="team-actions">
+      <button class="small" type="button" data-action="auto">주전 자동 채우기</button>
+      <button class="small" type="button" data-action="load">최근 입력 불러오기</button>
+    </div>
+    ${hasPositions(side) ? '' : '<p class="warn">포지션 데이터가 없어 교체 후보를 타석 수로만 고릅니다.</p>'}`;
+  section.querySelectorAll('tr[data-order]').forEach((row, i) => {
+    row.querySelector('.pos').value = POSITIONS[i];
+    fillPlayerOptions(side, row);
+    row.querySelector('.pos').addEventListener('change', () => fillPlayerOptions(side, row));
+  });
+  section.querySelector('[data-action=auto]').addEventListener('click', () => autoFill(side));
+  section.querySelector('[data-action=load]').addEventListener('click', () => {
+    if (!loadSaved(side)) alert('이 브라우저에 저장된 라인업이 없습니다.');
+  });
+}
+
+function setLineup(side, slots, starter) {
+  const section = document.getElementById('team-' + side);
+  section.querySelectorAll('tr[data-order]').forEach((row, i) => {
+    if (!slots[i]) return;
+    row.querySelector('.pos').value = slots[i].pos;
+    fillPlayerOptions(side, row);
+    row.querySelector('.player').value = slots[i].name;
+  });
+  if (starter) section.querySelector('.starter-select').value = starter;
+}
+
+// 포지션별 선발 출장 1위(지명타자는 남은 선수 중 타석 1위)로 채우고 출루율 순으로 타순을 정한다
+function autoFill(side) {
+  const used = new Set();
+  const picks = [];
+  for (const pos of POSITIONS) {
+    const candidate = sortedHitters(side, pos).find(h => !used.has(h.player));
+    if (candidate) { used.add(candidate.player); picks.push({ name: candidate.player, pos, obp: Number(candidate.obp) || 0 }); }
+  }
+  picks.sort((a, b) => b.obp - a.obp);
+  setLineup(side, picks);
+}
+
+function storageKey(side) { return 'kwb.lineup.' + DATA[side].team; }
+function saveLineup(side, team) {
+  try { localStorage.setItem(storageKey(side), JSON.stringify(team)); } catch (e) { /* 저장 불가 환경 */ }
+}
+function loadSaved(side) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(storageKey(side)) || 'null');
+    if (!saved) return false;
+    setLineup(side, saved.lineup, saved.starter);
+    return true;
+  } catch (e) { return false; }
+}
+
+function collect(side) {
+  const section = document.getElementById('team-' + side);
+  const lineup = [...section.querySelectorAll('tr[data-order]')].map(row => ({
+    pos: row.querySelector('.pos').value, name: row.querySelector('.player').value }));
+  const starter = section.querySelector('.starter-select').value;
+  const team = DATA[side].team;
+  if (!starter) throw new Error(`${team} 선발투수를 골라 주세요.`);
+  if (lineup.some(s => !s.name)) throw new Error(`${team} 타순 9명을 모두 골라 주세요.`);
+  if (new Set(lineup.map(s => s.name)).size !== 9) throw new Error(`${team} 타순에 같은 선수가 두 번 있습니다.`);
+  const missing = FIELD_POSITIONS.filter(p => !lineup.some(s => s.pos === p));
+  if (missing.length) throw new Error(`${team} 수비 포지션이 비었습니다: ${missing.join(', ')}`);
+  return { starter, lineup };
+}
+
+async function run(mode, button) {
+  const result = document.getElementById('result');
+  let body;
+  try {
+    body = { mode, homeTeam: DATA.home.team, awayTeam: DATA.away.team, home: collect('home'), away: collect('away') };
+  } catch (e) {
+    result.innerHTML = `<div class="card error">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  saveLineup('home', body.home);
+  saveLineup('away', body.away);
+  document.querySelectorAll('.actions button').forEach(b => b.disabled = true);
+  result.innerHTML = `<div class="card">${mode === 'analyze' ? '시나리오 분석' : '확정 예측'} 계산 중...</div>`;
+  try {
+    const response = await fetch('/simulation/scenario', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || '서버 오류');
+    result.innerHTML = mode === 'analyze' ? renderAnalysis(data) : renderPrediction(data);
+  } catch (e) {
+    result.innerHTML = `<div class="card error">오류: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    document.querySelectorAll('.actions button').forEach(b => b.disabled = false);
+  }
+}
+
+function probBar(homeProb) {
+  const away = DATA.away.team, home = DATA.home.team;
+  return `<div class="prob">
+    <div class="away" style="width:${(1 - homeProb) * 100}%">${escapeHtml(away)} ${pct(1 - homeProb)}</div>
+    <div class="home" style="width:${homeProb * 100}%">${escapeHtml(home)} ${pct(homeProb)}</div></div>`;
+}
+
+function renderWarnings(warnings) {
+  return warnings && warnings.length
+    ? `<div class="card warn">주의<ul>${warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul></div>` : '';
+}
+
+function renderBullpen(bullpen) {
+  const line = side => `${escapeHtml(DATA[side].team)}: 마무리 ${escapeHtml(bullpen[side].closer || '-')}, 중간 ${bullpen[side].middle.map(escapeHtml).join(', ')}`;
+  return `<p class="muted">불펜 자동 구성 (세이브·홀드 기록) — ${line('away')} / ${line('home')}</p>`;
+}
+
+function renderAnalysis(r) {
+  const [low, high] = r.range_home;
+  const rows = [...r.slots].sort((a, b) => Math.abs(b.absence_delta_home) - Math.abs(a.absence_delta_home)).slice(0, 12)
+    .map(s => {
+      const own = s.side === 'home' ? 1 : -1;       // 소속팀 관점으로 표시
+      const effect = own * s.absence_delta_home;
+      const replacements = s.replacements.map(o =>
+        `${escapeHtml(o.name)} ${Math.round(o.share * 100)}% (${pp(own * o.delta_home)})`).join(', ') || '대체 후보 없음';
+      return `<tr><td>${escapeHtml(s.team)}</td><td>${s.order}번 ${escapeHtml(s.pos)}</td><td>${escapeHtml(s.name)}</td>
+        <td>${Math.round(s.rest_probability * 100)}%</td>
+        <td class="${effect >= 0 ? 'up' : 'down'}">${pp(effect)}</td><td class="muted">${replacements}</td></tr>`;
+    }).join('');
+  return `
+    <div class="card">
+      <h3>입력한 라인업 기준 승률 <span class="muted">(${r.games.base.toLocaleString()}경기 시뮬레이션, 무승부 ${pct(r.base.draw)})</span></h3>
+      ${probBar(r.base.home)}
+      <p>예상 득점 ${escapeHtml(DATA.away.team)} ${r.base.away_runs.toFixed(2)} : ${r.base.home_runs.toFixed(2)} ${escapeHtml(DATA.home.team)}</p>
+      <h3>라인업 변동을 반영한 예상</h3>
+      <p>${escapeHtml(DATA.home.team)} 승률 기댓값 <b>${pct(r.expected_home)}</b>
+         <span class="muted">(가능한 라인업 ${r.games.lineup_draws.toLocaleString()}개 중 80% 범위 ${pct(low)} ~ ${pct(high)})</span></p>
+      ${renderBullpen(r.bullpen)}
+    </div>
+    <div class="card">
+      <h3>주요 변수: 선수가 빠지면 소속팀 승률이 얼마나 바뀌나</h3>
+      <table class="effects">
+        <tr><th>팀</th><th>타순</th><th>선수</th><th>결장 확률</th><th>결장 시</th><th>대체 후보 (비율, 효과)</th></tr>
+        ${rows}
+      </table>
+      <p class="muted">결장 확률은 시즌 선발 비율로 추정했습니다 (5~35%). 교체 효과는 타석당 득점 가치로 계산해 시뮬레이션에 맞춰 보정했으며, 오차는 약 ±0.5%p입니다.</p>
+    </div>
+    ${renderWarnings(r.warnings)}`;
+}
+
+function renderPrediction(r) {
+  const now = new Date().toLocaleString('ko-KR');
+  return `
+    <div class="card">
+      <h3>확정 예측 <span class="muted">(${r.games.toLocaleString()}경기 시뮬레이션, ${escapeHtml(now)})</span></h3>
+      ${probBar(r.home)}
+      <p class="muted">무승부 ${pct(r.draw)} · 승률은 무승부를 뺀 경기 기준</p>
+      ${renderBullpen(r.bullpen)}
+    </div>
+    ${renderWarnings(r.warnings)}`;
+}
+
+renderTeam('away');
+renderTeam('home');
+for (const side of ['away', 'home']) {
+  if (!loadSaved(side)) autoFill(side);
+}
+document.getElementById('analyzeBtn').addEventListener('click', e => run('analyze', e.target));
+document.getElementById('predictBtn').addEventListener('click', e => run('predict', e.target));
+</script>
+
+</body>
+</html>
