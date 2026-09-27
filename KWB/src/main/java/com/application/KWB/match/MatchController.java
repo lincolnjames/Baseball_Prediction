@@ -39,6 +39,8 @@ public class MatchController{
 		    List<HitterDTO> awayHitters = matchService.getHitterByTeam(awayTeam);
 		    List<PitcherDTO> awayPitchers = matchService.getPitcherByTeam(awayTeam);
 
+		    model.addAttribute("homeTeam", homeTeam);
+		    model.addAttribute("awayTeam", awayTeam);
 		    model.addAttribute("homeHitters", homeHitters);
 		    model.addAttribute("homePitchers", homePitchers);
 		    model.addAttribute("awayHitters", awayHitters);

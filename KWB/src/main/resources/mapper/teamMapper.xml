@@ -7,7 +7,7 @@
 	<select id="findHitterListByTeam" resultType="HitterDTO" parameterType="string">
         SELECT player, avg AS AVG, obp AS OBP, slg AS SLG
         FROM hitters
-        WHERE team = #{teamName}
+        WHERE team = #{teamName} AND pa > 0
         ORDER BY id
     </select>
 

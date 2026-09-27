@@ -49,7 +49,7 @@ public class SimulationService {
             int exitCode = process.waitFor();
             System.out.println("파이썬 종료 코드: " + exitCode);
             if (exitCode != 0) {
-                throw new IOException("Python process failed");
+                throw new IOException("Python process failed: " + output.toString().trim());
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

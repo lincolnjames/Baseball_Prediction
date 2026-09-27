@@ -56,6 +56,13 @@ class DataLoadingTests {
 	}
 
 	@Test
+	void hitterListsExcludePlayersWithoutPlateAppearances() {
+		// hitters.csv 에 타석 기록 없는 투수(예: LG 김진성)가 섞여 있다
+		assertThat(teamDAO.findHitterListByTeam("LG")).extracting(HitterDTO::getPlayer).doesNotContain("김진성");
+		assertThat(matchDAO.getHitterByTeam("LG")).extracting(HitterDTO::getPlayer).doesNotContain("김진성");
+	}
+
+	@Test
 	void teamMapperReturnsStats() {
 		HitterDTO first = teamDAO.findHitterListByTeam("LG").get(0);
 		assertThat(first.getPlayer()).isEqualTo("박동원");
