@@ -28,3 +28,7 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### 런타임 생성 파일 ###
+src/main/resources/static/input.json
+__pycache__/
