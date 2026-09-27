@@ -13,12 +13,17 @@ KBO 기록실에서 사람이 직접 복사한 표(탭 구분 텍스트)를 검�
 
 검산: 타율·출루율·장타율, 피안타율·평균자책·WHIP 를 원시 기록으로 다시 계산해 표 값과 비교한다.
 1·2번 표는 (팀, 순위, 이름)으로 짝짓고, 한쪽에만 있는 선수는 페이지 누락으로 보고한다.
+
+일정: 이름이 schedule 로 시작하는 파일은 KBO 일정·결과 페이지(월별)를 복사한 것으로 본다.
+  "03.28(토)  14:00  KT11vs7LG  리뷰 …  잠실  -" 형식이며, 경기 칸은 "원정 점수 vs 점수 홈" 이다.
+  TV 칸에 줄바꿈이 섞여 한 경기가 여러 줄로 나뉘므로, 줄이 아니라 칸 순서(시간 → 경기 → … → 구장 → 비고)로 읽는다.
 """
 import argparse
 import csv
 import os
+import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 TABLES = {
     16: ("hitter1", ["rank", "name", "team", "AVG", "G", "PA", "AB", "R", "H", "2B", "3B", "HR", "TB", "RBI",
@@ -38,6 +43,18 @@ HITTER_COLUMNS = ["Year", "Team", "Player", "G", "PA", "AB", "H", "2B", "3B", "H
                   "AVG", "OBP", "SLG", "K%", "BB%"]
 PITCHER_COLUMNS = ["Year", "Team", "Player", "G", "W", "L", "SV", "HLD", "IP", "TBF", "H", "HR", "BB", "HBP", "SO",
                    "ER", "ERA", "WHIP", "K%", "BB%", "HR/9"]
+SCHEDULE_COLUMNS = ["date", "stadium", "away_team", "home_team"]  # 앱 일정 (취소 경기 제외)
+GAMES_COLUMNS = ["date", "time", "stadium", "away", "home", "away_score", "home_score", "status"]
+
+# 구장 → 그 구장을 홈으로 쓰는 팀 (제2구장 포함)
+STADIUM_HOMES = {
+    "잠실": {"LG", "두산"}, "문학": {"SSG"}, "사직": {"롯데"}, "울산": {"롯데"}, "대구": {"삼성"}, "포항": {"삼성"},
+    "광주": {"KIA"}, "수원": {"KT"}, "창원": {"NC"}, "고척": {"키움"}, "대전": {"한화"}, "청주": {"한화"},
+}
+DATE_TOKEN = re.compile(r"^(\d{2})\.(\d{2})\(.\)$")
+TIME_TOKEN = re.compile(r"^\d{1,2}:\d{2}$")
+GAME_TOKEN = re.compile(rf"^({'|'.join(sorted(TEAMS))})(\d*)vs(\d*)({'|'.join(sorted(TEAMS))})$")
+MAX_TOKENS_TO_STADIUM = 12
 
 
 def innings_outs(text):
@@ -61,7 +78,7 @@ def read_tables(folder):
     tables = defaultdict(dict)
     errors = []
     for file_name in sorted(os.listdir(folder)):
-        if not file_name.endswith(".txt"):
+        if not file_name.endswith(".txt") or file_name.startswith("schedule"):
             continue
         with open(os.path.join(folder, file_name), encoding="utf-8-sig") as f:
             for line_no, line in enumerate(f, 1):
@@ -178,11 +195,120 @@ def build(folder, year):
     return hitters, pitchers, problems, renamed
 
 
-def write_csv(path, columns, rows):
+def parse_schedule_text(text, year):
+    """일정 페이지 텍스트 → (경기 목록, 문제 목록)"""
+    tokens = [t.strip() for t in re.split(r"[\t\r\n]+", text) if t.strip()]
+    games, problems = [], []
+    date = None
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        date_match = DATE_TOKEN.match(token)
+        if date_match:
+            date = f"{year}-{date_match.group(1)}-{date_match.group(2)}"
+            i += 1
+            continue
+        if not TIME_TOKEN.match(token):
+            i += 1  # 헤더, 팀 필터 목록 등
+            continue
+
+        time_text = token
+        game_match = GAME_TOKEN.match(tokens[i + 1]) if i + 1 < len(tokens) else None
+        if date is None or game_match is None:
+            problems.append(f"일정 {date or '날짜 없음'} {time_text}: 경기 칸을 읽을 수 없음 "
+                            f"'{tokens[i + 1] if i + 1 < len(tokens) else ''}'")
+            i += 1
+            continue
+        away, away_score, home_score, home = game_match.groups()
+
+        j = i + 2
+        while j < len(tokens) and j - i <= MAX_TOKENS_TO_STADIUM and tokens[j] not in STADIUM_HOMES:
+            j += 1
+        if j >= len(tokens) or tokens[j] not in STADIUM_HOMES:
+            problems.append(f"일정 {date} {away}vs{home}: 구장을 찾을 수 없음")
+            i += 2
+            continue
+        stadium = tokens[j]
+        note = tokens[j + 1] if j + 1 < len(tokens) else "-"
+
+        if note != "-":
+            status = note  # 우천취소, 폭염취소, 그라운드사정 …
+        elif away_score and home_score:
+            status = "final"
+        else:
+            status = "scheduled"
+        games.append({"date": date, "time": time_text, "stadium": stadium, "away": away, "home": home,
+                      "away_score": away_score if status == "final" else "",
+                      "home_score": home_score if status == "final" else "", "status": status})
+        i = j + 2
+
+    if not games:
+        problems.append("일정에서 경기를 하나도 찾지 못함")
+    return games, problems
+
+
+def build_schedule(folder, year):
+    """schedule*.txt → (경기 목록, 문제 목록, 참고 메시지). 여러 파일·겹치는 붙여넣기는 합친다."""
+    games, problems = {}, []
+    for file_name in sorted(os.listdir(folder)):
+        if not (file_name.startswith("schedule") and file_name.endswith(".txt")):
+            continue
+        with open(os.path.join(folder, file_name), encoding="utf-8-sig") as f:
+            parsed, file_problems = parse_schedule_text(f.read(), year)
+        problems += [f"{file_name}: {p}" for p in file_problems]
+        for game in parsed:
+            key = (game["date"], game["time"], game["away"], game["home"])
+            if key in games and games[key] != game:
+                problems.append(f"{file_name}: 같은 경기가 다른 내용으로 두 번 있음 {key}")
+            games[key] = game
+
+    notes = []
+    for game in games.values():
+        if game["away"] == game["home"]:
+            problems.append(f"일정 {game['date']} 원정·홈 팀이 같음: {game['away']}")
+        elif game["home"] not in STADIUM_HOMES[game["stadium"]]:
+            notes.append(f"{game['date']} {game['away']}@{game['home']}: {game['stadium']} 구장 (홈 구장 아님)")
+    return sorted(games.values(), key=lambda g: (g["date"], g["time"])), problems, notes
+
+
+def cross_check_wins(games, pitchers):
+    """경기 결과로 센 팀 승·패와 투수 기록의 승·패 합계를 비교한다 (두 페이지가 서로를 검증)."""
+    from_games = defaultdict(lambda: [0, 0])
+    for g in games:
+        if g["status"] != "final" or g["away_score"] == g["home_score"]:
+            continue
+        away_won = int(g["away_score"]) > int(g["home_score"])
+        from_games[g["away"] if away_won else g["home"]][0] += 1
+        from_games[g["home"] if away_won else g["away"]][1] += 1
+    from_pitchers = defaultdict(lambda: [0, 0])
+    for p in pitchers:
+        from_pitchers[p["Team"]][0] += int(p["W"])
+        from_pitchers[p["Team"]][1] += int(p["L"])
+    return [f"{team} 승패 불일치: 경기 결과 {from_games[team][0]}승 {from_games[team][1]}패 / "
+            f"투수 기록 {from_pitchers[team][0]}승 {from_pitchers[team][1]}패 (기록 복사 시점이나 누락 확인)"
+            for team in sorted(set(from_games) | set(from_pitchers)) if from_games[team] != from_pitchers[team]]
+
+
+def write_csv(path, columns, rows, sort_key=lambda r: (r["Team"], r["Player"])):
     with open(path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=columns)
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(sorted(rows, key=lambda r: (r["Team"], r["Player"])))
+        writer.writerows(sorted(rows, key=sort_key))
+
+
+def print_schedule_summary(games, notes):
+    by_status = Counter(g["status"] for g in games)
+    print(f"\n일정 {len(games)}경기: " + ", ".join(f"{s} {n}" for s, n in by_status.most_common()))
+    played, remaining = Counter(), Counter()
+    for g in games:
+        target = played if g["status"] == "final" else remaining if g["status"] == "scheduled" else None
+        if target is not None:
+            target[g["away"]] += 1
+            target[g["home"]] += 1
+    for team in sorted(TEAMS):
+        print(f"  {team}: 치른 경기 {played[team]}, 남은 경기 {remaining[team]}, 합계 {played[team] + remaining[team]}")
+    for message in notes:
+        print(f"  참고: {message}")
 
 
 def main():
@@ -203,6 +329,17 @@ def main():
     for message in renamed:
         print(f"  동명이인 구분: {message}")
 
+    games, schedule_problems, notes = build_schedule(args.folder, args.year)
+    has_schedule = bool(games or schedule_problems)
+    if has_schedule:
+        print_schedule_summary(games, notes)
+        problems += schedule_problems
+        if pitchers and not schedule_problems:
+            mismatches = cross_check_wins(games, pitchers)
+            problems += mismatches
+            if not mismatches:
+                print("  교차 검증: 경기 결과 승패 = 투수 기록 승패 합계 (전 팀 일치)")
+
     if problems:
         print(f"\n문제 {len(problems)}건 - CSV 를 만들지 않았습니다:")
         for p in problems:
@@ -213,6 +350,12 @@ def main():
     os.makedirs(out, exist_ok=True)
     write_csv(os.path.join(out, "hitters.csv"), HITTER_COLUMNS, hitters)
     write_csv(os.path.join(out, "pitchers.csv"), PITCHER_COLUMNS, pitchers)
+    if has_schedule:
+        by_time = lambda g: (g["date"], g["time"])  # noqa: E731
+        playable = [g | {"away_team": g["away"], "home_team": g["home"]}
+                    for g in games if g["status"] in ("final", "scheduled")]
+        write_csv(os.path.join(out, "schedule.csv"), SCHEDULE_COLUMNS, playable, by_time)
+        write_csv(os.path.join(out, "games.csv"), GAMES_COLUMNS, games, by_time)
     print(f"\n검산 통과. CSV 저장: {out}")
     return 0
 

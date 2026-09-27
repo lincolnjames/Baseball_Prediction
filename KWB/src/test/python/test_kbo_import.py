@@ -104,6 +104,60 @@ class VerificationTest(unittest.TestCase):
         self.assertEqual(len(renamed), 2)
 
 
+SCHEDULE_PAGE = """전체
+LGLG
+날짜\t시간\t경기\t게임센터\t하이라이트\tTV\t라디오\t구장\t비고
+03.28(토)\t14:00\tKT11vs7LG\t리뷰\t하이라이트\tS-T\t\t잠실\t-
+14:00\t두산0vs6NC\t리뷰\t하이라이트\tSPO-T
+KN-T
+SS-T\t\t창원\t-
+04.09(목)\t18:30\t키움vs두산\t\t\tSPO-2T\t\t잠실\t우천취소
+10.06(화)\t18:30\tNCvsLG\t\t\t\t\t잠실\t-
+18:30\t두산vs롯데\t\t\t\t\t사직\t-
+"""
+
+
+class ScheduleTest(unittest.TestCase):
+
+    def test_parses_results_cancellations_and_upcoming_games(self):
+        games, problems = ki.parse_schedule_text(SCHEDULE_PAGE, 2026)
+
+        self.assertEqual(problems, [])
+        self.assertEqual([(g["date"], g["away"], g["home"], g["status"]) for g in games], [
+            ("2026-03-28", "KT", "LG", "final"),
+            ("2026-03-28", "두산", "NC", "final"),     # TV 칸 줄바꿈으로 세 줄에 걸친 경기
+            ("2026-04-09", "키움", "두산", "우천취소"),
+            ("2026-10-06", "NC", "LG", "scheduled"),
+            ("2026-10-06", "두산", "롯데", "scheduled"),
+        ])
+        self.assertEqual((games[0]["away_score"], games[0]["home_score"]), ("11", "7"))
+        self.assertEqual(games[1]["stadium"], "창원")
+
+    def test_overlapping_pastes_are_merged(self):
+        folder = write_folder({"schedule_1.txt": SCHEDULE_PAGE.splitlines(),
+                               "schedule_2.txt": SCHEDULE_PAGE.splitlines()[:4]})  # 첫 경기까지만 겹침
+        games, problems, notes = ki.build_schedule(folder, 2026)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(games), 5)
+        self.assertEqual(notes, [])
+
+    def test_unreadable_game_cell_is_reported(self):
+        _, problems = ki.parse_schedule_text("03.28(토)\t14:00\tKT11vs7엘지\t리뷰\t잠실\t-", 2026)
+        self.assertEqual(len(problems), 2)  # 경기 칸 오류 + 경기 0개
+        self.assertIn("경기 칸", problems[0])
+
+    def test_wins_cross_check_between_schedule_and_pitchers(self):
+        games, _ = ki.parse_schedule_text(SCHEDULE_PAGE, 2026)
+        pitchers = [{"Team": "KT", "W": "1", "L": "0"}, {"Team": "LG", "W": "0", "L": "1"},
+                    {"Team": "NC", "W": "1", "L": "0"}, {"Team": "두산", "W": "0", "L": "1"}]
+        self.assertEqual(ki.cross_check_wins(games, pitchers), [])
+
+        pitchers[0]["W"] = "2"
+        problems = ki.cross_check_wins(games, pitchers)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("KT", problems[0])
+
+
 class SimulationWithRawCountsTest(unittest.TestCase):
 
     def test_exact_rates_are_used_when_raw_counts_exist(self):
