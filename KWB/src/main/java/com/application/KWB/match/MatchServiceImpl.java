@@ -1,6 +1,7 @@
 package com.application.KWB.match;
 
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,6 +57,12 @@ public class MatchServiceImpl implements MatchService{
 	@Override
 	public List<PitcherDTO> getPitcherByTeam(String awayTeam) {
 		return matchDAO.getPitcherByTeam(awayTeam);
+	}
+
+	@Override
+	public LocalDate getNextGameDate(String homeTeam, String awayTeam, LocalDate from) {
+		String next = matchDAO.getNextGameDate(homeTeam, awayTeam, from);
+		return next == null ? from : LocalDate.parse(next);
 	}
 
 	@Override

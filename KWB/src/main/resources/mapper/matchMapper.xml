@@ -27,6 +27,13 @@
         ORDER BY id
     </select>
 
+    <!-- 예측 화면: 두 팀의 가장 가까운 예정 경기일 (없으면 null) -->
+    <select id="getNextGameDate" resultType="string">
+        SELECT DATE_FORMAT(MIN(date), '%Y-%m-%d')
+        FROM schedule
+        WHERE home_team = #{homeTeam} AND away_team = #{awayTeam} AND date &gt;= #{from}
+    </select>
+
     <!-- 예측 화면: 라인업 후보 (타석 많은 순) -->
     <select id="getLineupCandidates" resultType="map" parameterType="string">
         SELECT player, pa, avg, obp, slg

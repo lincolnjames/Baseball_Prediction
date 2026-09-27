@@ -47,7 +47,7 @@ PITCHER_COLUMNS = ["Year", "Team", "Player", "G", "W", "L", "SV", "HLD", "IP", "
                    "ER", "ERA", "WHIP", "K%", "BB%", "HR/9"]
 POSITION_COLUMNS = ["Year", "Team", "Player", "POS", "G", "GS", "INN"]
 FIELD_POSITIONS = {"포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수"}
-SCHEDULE_COLUMNS = ["date", "stadium", "away_team", "home_team"]  # 앱 일정 (취소 경기 제외)
+SCHEDULE_COLUMNS = ["date", "start_time", "stadium", "away_team", "home_team"]  # 앱 일정 (취소 경기 제외)
 GAMES_COLUMNS = ["date", "time", "stadium", "away", "home", "away_score", "home_score", "status"]
 
 # 구장 → 그 구장을 홈으로 쓰는 팀 (제2구장 포함)
@@ -404,7 +404,7 @@ def main():
                   lambda p: (p["Team"], p["Player"], -int(p["GS"])))
     if has_schedule:
         by_time = lambda g: (g["date"], g["time"])  # noqa: E731
-        playable = [g | {"away_team": g["away"], "home_team": g["home"]}
+        playable = [g | {"away_team": g["away"], "home_team": g["home"], "start_time": g["time"]}
                     for g in games if g["status"] in ("final", "scheduled")]
         write_csv(os.path.join(out, "schedule.csv"), SCHEDULE_COLUMNS, playable, by_time)
         write_csv(os.path.join(out, "games.csv"), GAMES_COLUMNS, games, by_time)

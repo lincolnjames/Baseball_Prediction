@@ -86,6 +86,7 @@ CREATE TABLE pitchers (
 CREATE TABLE schedule (
     id         INT AUTO_INCREMENT PRIMARY KEY,
     date       DATE         NOT NULL,
+    start_time VARCHAR(5),               -- 'HH:MM' (가져온 일정에만 있음)
     stadium    VARCHAR(20)  NOT NULL,
     home_team  VARCHAR(20)  NOT NULL,
     away_team  VARCHAR(20)  NOT NULL,
@@ -103,4 +104,42 @@ CREATE TABLE positions (
     gs         INT,           -- 해당 포지션 선발 출장
     inn        DECIMAL(6,1),  -- 수비 이닝 (야구식 표기)
     INDEX idx_positions_team (team)
+) DEFAULT CHARSET = utf8mb4;
+
+-- ============================================================
+-- 아래 두 테이블은 앱을 재시작해도 지우지 않는다 (DROP 없음).
+-- 예측 기록은 수정·삭제하지 않는다: 결과를 보고 예측을 고치지 못하게 하기 위함.
+-- ============================================================
+
+-- 기록한 예측. 채점은 경기마다 '경기 시작 전 가장 늦은 기록'을 단계(stage)별로 쓴다.
+CREATE TABLE IF NOT EXISTS predictions (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+    created_at      DATETIME     NOT NULL,           -- 서버 기록 시각 (Asia/Seoul)
+    game_date       DATE         NOT NULL,
+    home_team       VARCHAR(20)  NOT NULL,
+    away_team       VARCHAR(20)  NOT NULL,
+    stage           VARCHAR(10)  NOT NULL,           -- analyze: 라인업 발표 전 / predict: 발표 후
+    home_win_prob   DECIMAL(6,4) NOT NULL,           -- 채점 대상: 무승부 제외 홈 승률 (analyze 는 기댓값)
+    base_home_prob  DECIMAL(6,4),                    -- analyze: 입력 라인업 기준 승률
+    range_low       DECIMAL(6,4),
+    range_high      DECIMAL(6,4),
+    draw_prob       DECIMAL(6,4),
+    games           INT,
+    home_starter    VARCHAR(50),
+    away_starter    VARCHAR(50),
+    home_lineup     TEXT,                            -- JSON [{name, pos}]
+    away_lineup     TEXT,
+    INDEX idx_predictions_game (game_date, home_team, away_team)
+) DEFAULT CHARSET = utf8mb4;
+
+-- 경기 결과. 가져온 일정(games.csv)의 종료 경기로 채우고, 화면에서 직접 입력할 수도 있다.
+CREATE TABLE IF NOT EXISTS game_results (
+    game_date   DATE         NOT NULL,
+    home_team   VARCHAR(20)  NOT NULL,
+    away_team   VARCHAR(20)  NOT NULL,
+    home_score  INT          NOT NULL,
+    away_score  INT          NOT NULL,
+    source      VARCHAR(10)  NOT NULL,               -- import / manual
+    updated_at  DATETIME     NOT NULL,
+    PRIMARY KEY (game_date, home_team, away_team)
 ) DEFAULT CHARSET = utf8mb4;
