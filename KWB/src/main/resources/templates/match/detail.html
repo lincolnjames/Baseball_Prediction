@@ -95,14 +95,14 @@
   }
 </style>
 </head>
-<body>
+<body th:data-home-team="${homeTeam}" th:data-away-team="${awayTeam}">
 
-<h1>경기 선수 선택 (Match Detail)</h1>
+<h1 th:text="${awayTeam} + ' (원정) vs ' + ${homeTeam} + ' (홈)'">경기 선수 선택</h1>
 
 <div class="team-container">
   <!-- 홈팀 -->
   <div class="player-list" id="homeTeam">
-    <h2>홈팀 선수 목록</h2>
+    <h2 th:text="${homeTeam} + ' (홈)'">홈팀 선수 목록</h2>
 
     <h3>타자</h3>
     <div id="homeHittersContainer">
@@ -134,7 +134,7 @@
 
   <!-- 어웨이팀 -->
   <div class="player-list" id="awayTeam">
-    <h2>어웨이팀 선수 목록</h2>
+    <h2 th:text="${awayTeam} + ' (원정)'">어웨이팀 선수 목록</h2>
 
     <h3>타자</h3>
     <div id="awayHittersContainer">
@@ -201,47 +201,55 @@ document.addEventListener('DOMContentLoaded', () => {
     return orderMap.map(o => o.name);
   }
 
-  // 투수 순번 추출 함수 (최대 5명, 중복 없이)
-  function getOrderedPitchers(containerId) {
+  // 투수 역할 추출 (1=선발 필수, 2~4=중간계투 등판 순서, 5=마무리). 역할 중복 불가
+  function getPitchingStaff(containerId) {
     const playerRows = document.querySelectorAll(`#${containerId} .player-row`);
-    const orderMap = [];
+    const byOrder = new Map();
 
-    playerRows.forEach(row => {
+    for (const row of playerRows) {
       const name = row.querySelector('.btnPlayer').textContent.trim();
       const order = row.querySelector('.pitchingOrderSelect').value;
-      if (order) {
-        orderMap.push({ order: parseInt(order), name });
-      }
-    });
+      if (!order) continue;
+      if (byOrder.has(order)) return null;
+      byOrder.set(order, name);
+    }
+    if (!byOrder.has('1')) return null;
 
-    const orders = orderMap.map(o => o.order);
-    const uniqueOrders = new Set(orders);
-    if (orders.length === 0 || orders.length > 5 || uniqueOrders.size !== orders.length) return null;
+    return {
+      starter: byOrder.get('1'),
+      middle: ['2', '3', '4'].filter(o => byOrder.has(o)).map(o => byOrder.get(o)),
+      closer: byOrder.get('5') || null
+    };
+  }
 
-    orderMap.sort((a, b) => a.order - b.order);
-    return orderMap.map(o => o.name);
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   runSimBtn.addEventListener('click', async () => {
     const homeHitters = getOrderedBatters("homeHittersContainer");
     const awayHitters = getOrderedBatters("awayHittersContainer");
-    const homePitchers = getOrderedPitchers("homePitchersContainer");
-    const awayPitchers = getOrderedPitchers("awayPitchersContainer");
+    const homeStaff = getPitchingStaff("homePitchersContainer");
+    const awayStaff = getPitchingStaff("awayPitchersContainer");
 
     if (!homeHitters || !awayHitters) {
       alert('타자 타순(1~9번)을 중복 없이 모두 지정해야 합니다.');
       return;
     }
-    if (!homePitchers || !awayPitchers) {
-      alert('투수는 각 팀당 1~5명의 순서를 중복 없이 지정해야 합니다.');
+    if (!homeStaff || !awayStaff) {
+      alert('각 팀 선발투수를 지정해야 하며, 투수 역할은 중복될 수 없습니다.');
       return;
     }
 
+    const homeTeam = document.body.dataset.homeTeam;
+    const awayTeam = document.body.dataset.awayTeam;
     const requestBody = {
-      homeBatters: homeHitters,
-      awayBatters: awayHitters,
-      homePitchers: homePitchers,
-      awayPitchers: awayPitchers,
+      homeTeam,
+      awayTeam,
+      home: { lineup: homeHitters, ...homeStaff },
+      away: { lineup: awayHitters, ...awayStaff },
       matchCount: 1000
     };
 
@@ -254,22 +262,25 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify(requestBody)
       });
 
-      if (!response.ok) throw new Error('서버 오류');
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || '서버 오류');
+      }
       const result = await response.json();
 
+      const home = escapeHtml(homeTeam);
+      const away = escapeHtml(awayTeam);
+      const warnings = (result.warnings || []).map(w => `<li>${escapeHtml(w)}</li>`).join('');
       document.getElementById('simulationResult').innerHTML = `
-        <h3>시뮬레이션 결과</h3>
-        <div>홈팀 승: ${result.team_A_win_count}</div>
-        <div>어웨이팀 승: ${result.team_B_win_count}</div>
-        <div>무승부: ${result.draw_count}</div>
-        <div>홈팀 평균 득점: ${result.team_A_avg_score.toFixed(3)}</div>
-        <div>어웨이팀 평균 득점: ${result.team_B_avg_score.toFixed(3)}</div>
-        <div>홈팀 승률: ${(result.team_A_win_rate * 100).toFixed(1)}%</div>
-        <div>어웨이팀 승률: ${(result.team_B_win_rate * 100).toFixed(1)}%</div>
-        <div>무승부 비율: ${(result.draw_rate * 100).toFixed(1)}%</div>
+        <h3>시뮬레이션 결과 (${result.match_count}경기)</h3>
+        <div>${home} 승률: ${(result.home_win_rate * 100).toFixed(1)}% (${result.home_win_count}승)</div>
+        <div>${away} 승률: ${(result.away_win_rate * 100).toFixed(1)}% (${result.away_win_count}승)</div>
+        <div>무승부: ${(result.draw_rate * 100).toFixed(1)}% (${result.draw_count}경기)</div>
+        <div>평균 득점: ${home} ${result.home_avg_score.toFixed(2)} : ${result.away_avg_score.toFixed(2)} ${away}</div>
+        ${warnings ? `<div style="margin-top:12px;color:#b45309">주의<ul>${warnings}</ul></div>` : ''}
       `;
     } catch (err) {
-      document.getElementById('simulationResult').innerHTML = "<b>오류가 발생했습니다: " + err.message + "</b>";
+      document.getElementById('simulationResult').innerHTML = "<b>오류가 발생했습니다: " + escapeHtml(err.message) + "</b>";
     }
   });
 });
