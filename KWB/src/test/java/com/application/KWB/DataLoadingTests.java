@@ -83,6 +83,20 @@ class DataLoadingTests {
 		});
 	}
 
+	@Test
+	void homeTeamOwnsTheStadium() {
+		// 잠실은 LG·두산 공동 홈구장이라 제외
+		int mismatches = jdbcTemplate.queryForObject("""
+			SELECT COUNT(*) FROM schedule
+			WHERE (stadium = '문학' AND home_team <> 'SSG') OR (stadium = '사직' AND home_team <> '롯데')
+			   OR (stadium = '대구' AND home_team <> '삼성') OR (stadium = '광주' AND home_team <> 'KIA')
+			   OR (stadium = '수원' AND home_team <> 'KT')   OR (stadium = '창원' AND home_team <> 'NC')
+			   OR (stadium = '고척' AND home_team <> '키움') OR (stadium = '대전' AND home_team <> '한화')
+			   OR (stadium = '잠실' AND home_team NOT IN ('LG', '두산'))
+			""", Integer.class);
+		assertThat(mismatches).isZero();
+	}
+
 	private int count(String table) {
 		return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class);
 	}
