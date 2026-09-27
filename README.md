@@ -87,10 +87,9 @@ py -m unittest discover -s KWB/src/test/python
 ```bash
 cd KWB/backtest
 py backtest.py --sims 1000 --report REPORT.md   # 약 1분
-py fetch_games.py                                # 경기 결과 다시 받기 (보통 필요 없음)
 ```
 
-- **데이터**: KBO 공식 사이트의 2025 정규시즌 720경기 결과와 실제 선발투수 ([`data/kbo_2025_games.csv`](KWB/backtest/data/kbo_2025_games.csv))
+- **데이터**: 2025 정규시즌 720경기 결과와 실제 선발투수. **저장소에는 포함하지 않습니다.** KBO 공식 사이트가 사전 승인 없는 자동 수집·복제를 금지하기 때문입니다. 승인받은 경로로 확보한 파일을 `KWB/backtest/data/kbo_2025_games.csv`에 두고 실행하세요 (컬럼은 `backtest.py`의 `GAMES_COLUMNS` 참고). 파일이 없으면 관련 테스트는 건너뜁니다.
 - **미래 정보 차단**: 선수 기록 CSV는 2025-05-20 경기까지 반영된 스냅샷이므로(선발 39명의 등판 수가 모두 일치), 5월 21일 이후 경기만 평가합니다.
 - **입력**: 선발투수는 실제 선발, 타순과 불펜은 팀별 기본값(타석 상위 9명, 등판 많은 불펜)
 

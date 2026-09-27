@@ -9,6 +9,10 @@
 - 선발투수는 실제 경기 선발을 쓰고, 타순·불펜은 팀별 기본값(타석 수 상위 9명, 등판 많은 불펜)을 쓴다.
   실제 경기 타순은 데이터에 없다.
 - 무승부 경기는 평가에서 제외하고, 예측값은 "무승부가 아닐 때 홈팀이 이길 확률"로 본다.
+
+경기 결과 데이터(data/kbo_2025_games.csv)는 저장소에 포함하지 않는다.
+KBO 사이트는 사전 승인 없는 자동 수집·복제를 금지하므로, 승인받은 경로로 확보한 파일을
+data/ 에 두고 실행한다. 형식은 GAMES_COLUMNS 참고 (status 가 final 인 경기만 사용).
 """
 import argparse
 import csv
@@ -26,6 +30,8 @@ sys.path.insert(0, os.path.abspath(STATIC_DIR))
 import simulation as sim  # noqa: E402
 
 GAMES_CSV = os.path.join(BACKTEST_DIR, "data", "kbo_2025_games.csv")
+GAMES_COLUMNS = ["date", "game_id", "stadium", "away", "home", "away_score", "home_score",
+                 "away_starter", "home_starter", "status"]
 SNAPSHOT_DATE = "2025-05-20"
 PYTHAGOREAN_EXPONENT = 1.83
 RELIEVER_MAX_IP_PER_G = 2.0
@@ -35,6 +41,10 @@ CALIBRATION_BINS = [0.0, 0.35, 0.45, 0.55, 0.65, 1.0]
 # ---------- 데이터 ----------
 
 def load_games(path=GAMES_CSV):
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"경기 결과 파일이 없습니다: {path}\n"
+            f"저장소에는 포함되지 않습니다. 컬럼: {', '.join(GAMES_COLUMNS)}")
     with open(path, encoding="utf-8", newline="") as f:
         games = [g for g in csv.DictReader(f) if g["status"] == "final"]
     for g in games:
