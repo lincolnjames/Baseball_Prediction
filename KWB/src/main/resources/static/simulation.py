@@ -2,9 +2,10 @@
 KBO 경기 몬테카를로 시뮬레이션.
 
 사용법: py simulation.py input.json
-입력:  {"home": Team, "away": Team, "match_count": 1000, "seed": null}
+입력:  {"home": Team, "away": Team, "match_count": 1000, "seed": null, "data_dir": null}
        Team = {"team": "LG", "lineup": [타자 9명], "starter": "선발",
                "middle": ["중간계투", ...], "closer": "마무리" 또는 null}
+       data_dir = hitters.csv, pitchers.csv 가 있는 폴더 (없으면 이 파일이 있는 폴더의 기본 데이터)
 출력:  결과 JSON 한 줄 (표준출력)
 
 모델 요약
@@ -21,6 +22,7 @@ import os
 import random
 import sys
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -128,8 +130,10 @@ class Model:
 
         self._hitters = _index_rows(hitters)
         self._pitchers = _index_rows(pitchers)
-        self._hands = _index_types(_read_csv(data_dir, "hitters_type.csv"), "Handedness", BAT_HANDS)
-        self._ptypes = _index_types(_read_csv(data_dir, "pitchers_type.csv"), "Pitching_Type", PITCH_TYPES)
+        # 좌우 정보는 시즌이 바뀌어도 거의 같으므로, 데이터 폴더에 없으면 기본 폴더 것을 쓴다
+        type_dir = data_dir if os.path.exists(os.path.join(data_dir, "hitters_type.csv")) else DATA_DIR
+        self._hands = _index_types(_read_csv(type_dir, "hitters_type.csv"), "Handedness", BAT_HANDS)
+        self._ptypes = _index_types(_read_csv(type_dir, "pitchers_type.csv"), "Pitching_Type", PITCH_TYPES)
 
         self.league_batter = _league_batter(hitters)
         self.league_pitcher = _league_pitcher(pitchers)
@@ -154,21 +158,13 @@ class Model:
             splits = _apply_splits(rates, SPLIT_COLUMNS, self.batter_platoon, _platoon_group(hand), {})
             return Batter((team, name), rates, splits, lb["xb"], hand)
 
-        pa = _num(row, "PA")
-        k = (_num(row, "K%") or 0) / 100
-        bb = (_num(row, "BB%") or 0) / 100
-        avg, obp, slg = _num(row, "AVG") or 0, _num(row, "OBP") or 0, _num(row, "SLG") or 0
-        h, walk = _hit_walk_rates(avg, obp, bb)
-
-        rates = {
-            "k": _regress(k, pa, lb["k"], BATTER_REG["k"]),
-            "bb": _regress(walk, pa, lb["bb"], BATTER_REG["bb"]),
-            "h": _regress(h, pa, lb["h"], BATTER_REG["h"]),
-        }
+        obs = _batter_observed(row)
+        pa = obs["pa"]
+        rates = {e: _regress(obs[e], pa, lb[e], BATTER_REG[e]) for e in ("k", "bb", "h")}
         splits = _apply_splits(rates, SPLIT_COLUMNS, self.batter_platoon, _platoon_group(hand), _batter_split_diffs(row))
 
-        xb_obs = (slg - avg) / avg if avg > 0 else lb["xb"]
-        xb = _regress(xb_obs, pa * h, lb["xb"], XB_REG_HITS)
+        xb_obs = obs["xb"] if obs["xb"] is not None else lb["xb"]
+        xb = _regress(xb_obs, obs["hits"], lb["xb"], XB_REG_HITS)
         return Batter((team, name), rates, splits, xb, hand)
 
     def pitcher(self, team, name):
@@ -180,25 +176,15 @@ class Model:
             splits = _apply_splits(rates, PITCHER_SPLIT_COLUMNS, self.pitcher_platoon, ptype, {}, include_league=False)
             return Pitcher((team, name), rates, splits, lp["hr_per_hit"], DEFAULT_STARTER_INNINGS, ptype)
 
-        ip = innings(_num(row, "IP"))
-        g = _num(row, "G") or 0
-        whip = _num(row, "WHIP") or lp["whip"]
-        bf = ip * (3 + whip)
-        k = (_num(row, "K%") or 0) / 100
-        bb_pct = (_num(row, "BB%") or 0) / 100
-        h = max(whip / (3 + whip) - bb_pct, 0.02)
-        hr = (_num(row, "HR/9") or 0) / (9 * (3 + whip))
-
-        rates = {
-            "k": _regress(k, bf, lp["k"], PITCHER_REG["k"]),
-            "bb": _regress(bb_pct + HBP_RATE, bf, lp["bb"], PITCHER_REG["bb"]),
-            "h": _regress(h, bf, lp["h"], PITCHER_REG["h"]),
-        }
+        obs = _pitcher_observed(row, lp["whip"])
+        bf = obs["bf"]
+        rates = {e: _regress(obs[e], bf, lp[e], PITCHER_REG[e]) for e in ("k", "bb", "h")}
         splits = _apply_splits(rates, PITCHER_SPLIT_COLUMNS, self.pitcher_platoon, ptype, _pitcher_split_diffs(row),
                                include_league=False)
 
-        hr_per_hit = _regress(hr / h, bf, lp["hr_per_hit"], HR_REG_BF)
-        starter_innings = ip / g if g > 0 else DEFAULT_STARTER_INNINGS
+        hr_per_hit = _regress(obs["hr"] / max(obs["h"], 0.02), bf, lp["hr_per_hit"], HR_REG_BF)
+        g = _num(row, "G") or 0
+        starter_innings = obs["ip"] / g if g > 0 else DEFAULT_STARTER_INNINGS
         return Pitcher((team, name), rates, splits, hr_per_hit, starter_innings, ptype)
 
     def _find(self, index, team, name, role):
@@ -379,21 +365,58 @@ def _lookup_type(index, team, name):
     return next(iter(values)) if len(values) == 1 else None
 
 
+def _batter_observed(row):
+    """타자 한 명의 타석당 관측 비율 {pa, k, bb, h, xb, hits}.
+
+    원시 기록(H, BB, HBP, SO, 2B, 3B, HR)이 있으면 그대로 나누고,
+    없으면(비율만 있는 데이터) 타율·출루율·K%·BB% 로 추정한다.
+    bb 는 볼넷+사구, xb 는 안타당 추가 루타(안타가 없으면 None).
+    """
+    pa = _num(row, "PA") or 0
+    if _num(row, "H") is not None and _num(row, "BB") is not None:
+        hits = _num(row, "H")
+        extra = (_num(row, "2B") or 0) + 2 * (_num(row, "3B") or 0) + 3 * (_num(row, "HR") or 0)
+        return {"pa": pa, "k": (_num(row, "SO") or 0) / pa, "bb": (_num(row, "BB") + (_num(row, "HBP") or 0)) / pa,
+                "h": hits / pa, "xb": extra / hits if hits else None, "hits": hits}
+
+    bb_pct = (_num(row, "BB%") or 0) / 100
+    avg, obp, slg = _num(row, "AVG") or 0, _num(row, "OBP") or 0, _num(row, "SLG") or 0
+    h, walk = _hit_walk_rates(avg, obp, bb_pct)
+    return {"pa": pa, "k": (_num(row, "K%") or 0) / 100, "bb": walk, "h": h,
+            "xb": (slg - avg) / avg if avg > 0 else None, "hits": h * pa}
+
+
+def _pitcher_observed(row, default_whip):
+    """투수 한 명의 상대 타자당 관측 비율 {bf, k, bb, h, hr, ip}.
+
+    상대 타자 수(TBF)와 원시 기록이 있으면 그대로 나누고,
+    없으면 WHIP·K%·BB%·HR/9 로 상대 타자 수와 비율을 추정한다.
+    """
+    ip = innings(_num(row, "IP"))
+    tbf = _num(row, "TBF")
+    if tbf:
+        return {"bf": tbf, "k": (_num(row, "SO") or 0) / tbf,
+                "bb": ((_num(row, "BB") or 0) + (_num(row, "HBP") or 0)) / tbf,
+                "h": (_num(row, "H") or 0) / tbf, "hr": (_num(row, "HR") or 0) / tbf, "ip": ip}
+
+    whip = _num(row, "WHIP") or default_whip
+    bb_pct = (_num(row, "BB%") or 0) / 100
+    return {"bf": ip * (3 + whip), "k": (_num(row, "K%") or 0) / 100, "bb": bb_pct + HBP_RATE,
+            "h": max(whip / (3 + whip) - bb_pct, 0.02), "hr": (_num(row, "HR/9") or 0) / (9 * (3 + whip)),
+            "ip": ip}
+
+
 def _league_batter(rows):
-    total = {"pa": 0, "k": 0, "bb": 0, "h": 0, "xb": 0, "hits": 0}
+    total = defaultdict(float)
     for r in rows:
-        pa, avg, obp, slg = _num(r, "PA"), _num(r, "AVG"), _num(r, "OBP"), _num(r, "SLG")
-        if None in (avg, obp, slg):
-            continue
-        bb = (_num(r, "BB%") or 0) / 100
-        h, walk = _hit_walk_rates(avg, obp, bb)
+        obs = _batter_observed(r)
+        pa = obs["pa"]
+        for e in ("k", "bb", "h"):
+            total[e] += obs[e] * pa
         total["pa"] += pa
-        total["k"] += (_num(r, "K%") or 0) / 100 * pa
-        total["bb"] += walk * pa
-        total["h"] += h * pa
-        if avg > 0:
-            total["xb"] += (slg - avg) / avg * h * pa
-            total["hits"] += h * pa
+        if obs["xb"] is not None:
+            total["xb"] += obs["xb"] * obs["hits"]
+            total["hits"] += obs["hits"]
     league = {e: total[e] / total["pa"] for e in ("k", "bb", "h")}
     league["out"] = 1 - league["k"] - league["bb"] - league["h"]
     league["xb"] = total["xb"] / total["hits"]
@@ -401,25 +424,18 @@ def _league_batter(rows):
 
 
 def _league_pitcher(rows):
-    total = {"bf": 0, "k": 0, "bb": 0, "h": 0, "hr": 0, "ip": 0, "whip": 0}
+    whips = [(_num(r, "WHIP"), innings(_num(r, "IP"))) for r in rows if _num(r, "WHIP") is not None]
+    league_whip = sum(w * ip for w, ip in whips) / sum(ip for _, ip in whips)
+    total = defaultdict(float)
     for r in rows:
-        whip = _num(r, "WHIP")
-        if whip is None:
-            continue
-        ip = innings(_num(r, "IP"))
-        bf = ip * (3 + whip)
-        bb_pct = (_num(r, "BB%") or 0) / 100
-        total["bf"] += bf
-        total["ip"] += ip
-        total["whip"] += whip * ip
-        total["k"] += (_num(r, "K%") or 0) / 100 * bf
-        total["bb"] += (bb_pct + HBP_RATE) * bf
-        total["h"] += max(whip / (3 + whip) - bb_pct, 0.02) * bf
-        total["hr"] += (_num(r, "HR/9") or 0) / (9 * (3 + whip)) * bf
+        obs = _pitcher_observed(r, league_whip)
+        for e in ("k", "bb", "h", "hr"):
+            total[e] += obs[e] * obs["bf"]
+        total["bf"] += obs["bf"]
     league = {e: total[e] / total["bf"] for e in ("k", "bb", "h")}
     league["out"] = 1 - league["k"] - league["bb"] - league["h"]
     league["hr_per_hit"] = total["hr"] / total["h"]
-    league["whip"] = total["whip"] / total["ip"]
+    league["whip"] = league_whip
     return league
 
 
@@ -563,7 +579,7 @@ def simulate_game(model, home, away, rng):
 
 def run(args, data_dir=DATA_DIR):
     start = time.time()
-    model = Model(data_dir)
+    model = Model(args.get("data_dir") or data_dir)
     home = model.team_plan(args["home"])
     away = model.team_plan(args["away"])
     match_count = int(args.get("match_count", 1000))
