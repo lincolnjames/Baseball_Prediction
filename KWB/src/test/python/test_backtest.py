@@ -44,6 +44,11 @@ class MetricsTest(unittest.TestCase):
 
 class DataSplitTest(unittest.TestCase):
 
+    def test_missing_games_file_gives_clear_error(self):
+        with self.assertRaises(FileNotFoundError) as ctx:
+            bt.load_games(os.path.join(KWB_DIR, "backtest", "data", "없는파일.csv"))
+        self.assertIn("저장소에는 포함되지 않습니다", str(ctx.exception))
+
     def test_snapshot_split_has_no_future_games_in_train(self):
         games = [game("2025-05-20", "LG", "KT", 3, 2), game("2025-05-21", "KT", "LG", 1, 4)]
         train, test = bt.split_games(games, "2025-05-20")
@@ -70,10 +75,12 @@ class RealDataTest(unittest.TestCase):
             self.assertEqual(len(roster["lineup"]), 9, team)
             self.assertIsNotNone(roster["closer"], team)
 
+    @unittest.skipUnless(os.path.exists(bt.GAMES_CSV), "경기 결과 파일 없음 (저장소 미포함)")
     def test_collected_games_cover_full_regular_season(self):
         games = bt.load_games()
         self.assertEqual(len(games), 720)  # 10개 팀 × 144경기 ÷ 2
 
+    @unittest.skipUnless(os.path.exists(bt.GAMES_CSV), "경기 결과 파일 없음 (저장소 미포함)")
     def test_schedule_home_away_matches_official_results(self):
         official = {(g["date"], g["away"], g["home"]): g["stadium"] for g in bt.load_games()}
         path = os.path.join(bt.STATIC_DIR, "schedule.csv")

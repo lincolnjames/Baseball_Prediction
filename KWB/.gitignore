@@ -32,3 +32,6 @@ out/
 ### 런타임 생성 파일 ###
 src/main/resources/static/input.json
 __pycache__/
+
+### 외부 사이트 데이터 (재배포 금지, 로컬 전용) ###
+backtest/data/
