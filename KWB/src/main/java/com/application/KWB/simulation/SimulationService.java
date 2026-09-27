@@ -1,14 +1,27 @@
 package com.application.KWB.simulation;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.*;
 
 @Service
 public class SimulationService {
+
+    private final String dataDir;
+
+    public SimulationService(@Value("${kwb.data-dir:}") String dataDir) {
+        this.dataDir = dataDir;
+    }
+
     public Map<String, Object> runSimulation(Map<String, Object> simInput) throws IOException {
+        // DB 에 적재한 것과 같은 선수 기록을 쓰도록 데이터 폴더를 넘긴다 (비어 있으면 simulation.py 기본 데이터)
+        if (dataDir != null && !dataDir.isBlank()) {
+            simInput.put("data_dir", Path.of(dataDir).toAbsolutePath().toString());
+        }
         ObjectMapper mapper = new ObjectMapper();
         String inputJson = mapper.writeValueAsString(simInput);
 

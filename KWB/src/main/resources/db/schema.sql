@@ -2,6 +2,7 @@
 -- 앱 시작 시마다 실행되어 테이블을 다시 만들고, CsvDataLoader 가 static/*.csv 를 적재한다.
 -- CSV 가 원본 데이터(source of truth)이므로 DB 에 직접 수정한 내용은 재시작 시 사라진다.
 -- 컬럼명 규칙: CSV 헤더를 소문자로 바꾸고 % → _pct, + → _plus, / → _per_, 공백 → _ 로 치환
+-- 데이터 종류(2025 비율 기록 / 2026 원시 기록)에 따라 채워지는 컬럼이 다르며, 없는 컬럼은 NULL
 
 DROP TABLE IF EXISTS hitters;
 DROP TABLE IF EXISTS pitchers;
@@ -12,7 +13,17 @@ CREATE TABLE hitters (
     year      INT          NOT NULL,
     team      VARCHAR(20)  NOT NULL,
     player    VARCHAR(50)  NOT NULL,
+    g         INT,
     pa        INT,
+    ab        INT,
+    h         INT,
+    `2b`      INT,
+    `3b`      INT,
+    hr        INT,
+    bb        INT,
+    hbp       INT,
+    so        INT,
+    sf        INT,
     avg       DECIMAL(5,3),
     obp       DECIMAL(5,3),
     slg       DECIMAL(5,3),
@@ -43,7 +54,16 @@ CREATE TABLE pitchers (
     g         INT,
     w         INT,
     l         INT,
+    sv        INT,
+    hld       INT,
     ip        DECIMAL(5,1),  -- 야구식 표기: 58.2 = 58⅔ 이닝
+    tbf       INT,           -- 상대 타자 수
+    h         INT,
+    hr        INT,
+    bb        INT,
+    hbp       INT,
+    so        INT,
+    er        INT,
     era       DECIMAL(5,2),
     fip       DECIMAL(5,2),
     whip      DECIMAL(5,2),
