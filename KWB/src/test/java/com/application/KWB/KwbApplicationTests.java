@@ -1,4 +1,4 @@
-package com.spring.KWB;
+package com.application.KWB;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;

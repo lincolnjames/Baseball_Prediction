@@ -4,25 +4,27 @@
 <mapper namespace="com.application.KWB.match.MatchDAO">
 
 
-	<select id="getGamesByMonth" resultType="GameDTO" parameterType="int">
-        SELECT * 
+	<select id="getGamesByMonth" resultType="GameDto" parameterType="int">
+        SELECT DATE_FORMAT(date, '%Y-%m-%d') AS date,
+               home_team AS hometeam,
+               away_team AS awayteam
         FROM schedule
         WHERE MONTH(date) = #{month}
+        ORDER BY date, id
     </select>
-    
-    <select id="getHitterByTeam" resultType="PitcherDTO" parameterType="string">
-        SELECT * 
+
+    <select id="getHitterByTeam" resultType="HitterDTO" parameterType="string">
+        SELECT player, avg AS AVG, obp AS OBP, slg AS SLG
         FROM hitters
         WHERE team = #{teamName}
+        ORDER BY id
     </select>
-    
-    <select id="getPitcherByTeam" resultType="HitterDTO" parameterType="string">
-        SELECT * 
+
+    <select id="getPitcherByTeam" resultType="PitcherDTO" parameterType="string">
+        SELECT player, g AS G, w AS W, l AS L, ip AS IP, era AS ERA, whip AS WHIP
         FROM pitchers
         WHERE team = #{teamName}
+        ORDER BY id
     </select>
-    
-	
-  
-  
+
 </mapper>

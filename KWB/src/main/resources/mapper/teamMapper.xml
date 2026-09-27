@@ -5,16 +5,17 @@
 
 
 	<select id="findHitterListByTeam" resultType="HitterDTO" parameterType="string">
-        SELECT * 
+        SELECT player, avg AS AVG, obp AS OBP, slg AS SLG
         FROM hitters
         WHERE team = #{teamName}
+        ORDER BY id
     </select>
-    
+
 	<select id="findPitcherListByTeam" resultType="PitcherDTO" parameterType="string">
-        SELECT * 
+        SELECT player, g AS G, w AS W, l AS L, ip AS IP, era AS ERA, whip AS WHIP
         FROM pitchers
         WHERE team = #{teamName}
+        ORDER BY id
     </select>
-  
-  
+
 </mapper>
