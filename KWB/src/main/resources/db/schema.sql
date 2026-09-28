@@ -80,6 +80,7 @@ CREATE TABLE pitchers (
     v_l_whip  DECIMAL(5,2),
     v_l_avg   DECIMAL(5,3),
     v_l_obp   DECIMAL(5,3),
+    wp        INT,           -- 폭투 (직접 복사한 2026 원시 기록에만 있음)
     INDEX idx_pitchers_team (team, year)
 ) DEFAULT CHARSET = utf8mb4;
 
