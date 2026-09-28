@@ -134,7 +134,8 @@ function renderTeam(side) {
     ${hasPositions(side) ? '' : '<p class="muted" style="color:var(--warning)">포지션 데이터가 없어 교체 후보를 타석 수로만 고릅니다.</p>'}
     <details class="quick-fill">
       <summary>표 붙여넣기로 채우기</summary>
-      <p class="muted" style="margin:6px 0">다른 사이트의 타순표·선발투수 정보를 복사해 붙여넣으면, 이름이 일치하는 선수를 자동으로 채웁니다.</p>
+      <p class="muted" style="margin:6px 0">다른 사이트의 타순표·경기 기록(박스스코어)·선발투수 정보를 복사해 붙여넣으면, 이름이 일치하는
+        선수를 자동으로 채웁니다. 포지션은 "좌익수"든 "좌"·"一"(1루) 같은 약자든 상관없습니다.</p>
       <textarea class="paste-box" rows="4" placeholder="예) 1	2루수	신민재	1.02"></textarea>
       <div class="team-actions">
         <button class="btn btn-primary btn-sm" type="button" data-action="paste-fill">붙여넣기 반영</button>
@@ -177,22 +178,30 @@ function autoFill(side) {
 }
 
 // 다른 사이트에서 복사한 표(탭 구분)에서 우리 로스터 이름과 일치하는 값을 찾아 타순·선발투수를 채운다.
-// 열 순서·여분의 열(WAR, ERA 등)은 상관없다 — 줄마다 "숫자 1~9", "포지션명", "로스터에 있는 타자명"이
-// 모두 있으면 그 줄을 타순 한 줄로 보고, 그 외 줄에서 로스터 투수명과 일치하면 선발투수로 본다.
+// 열 순서·여분의 열(WAR, ERA 등)은 상관없다 — 줄마다 "숫자 1~9", "포지션(풀네임 또는 한 글자 약자)",
+// "로스터에 있는 타자명"이 모두 있으면 그 줄을 타순 한 줄로 보고, 그 외 줄에서 로스터 투수명과
+// 일치하면 선발투수로 본다. 경기 기록(박스스코어) 표는 같은 타순 번호에 교체 선수도 같이 나오는데,
+// 선발이 항상 먼저 나오므로 그 타순 번호에서 처음 찾은 한 줄만 쓴다.
+const POSITION_ABBREVIATIONS = {
+  '좌': '좌익수', '중': '중견수', '우': '우익수', '포': '포수', '지': '지명타자',
+  '一': '1루수', '二': '2루수', '三': '3루수', '유': '유격수',
+};
 function parseQuickFill(side, text) {
   const roster = DATA[side];
   const hitterNames = new Set(roster.hitters.map(h => h.player));
   const pitcherNames = new Set(roster.pitchers.map(p => p.player));
   const posSet = new Set(POSITIONS);
+  const seenOrders = new Set();
   const picks = [];
   let starter = null;
   for (const raw of text.split(/\r?\n/)) {
     const tokens = raw.trim().split(/\s+/).filter(Boolean);
     if (!tokens.length) continue;
     const orderTok = tokens.find(t => /^[1-9]$/.test(t));
-    const posTok = tokens.find(t => posSet.has(t));
+    const posTok = tokens.map(t => POSITION_ABBREVIATIONS[t] || t).find(t => posSet.has(t));
     const nameTok = tokens.find(t => hitterNames.has(t));
-    if (orderTok && posTok && nameTok) {
+    if (orderTok && posTok && nameTok && !seenOrders.has(orderTok)) {
+      seenOrders.add(orderTok);
       picks.push({ order: parseInt(orderTok), pos: posTok, name: nameTok });
       continue;
     }
