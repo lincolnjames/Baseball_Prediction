@@ -25,7 +25,7 @@ class ScriptedModel:
     def __init__(self):
         self.plate_appearances = []
 
-    def outcome_table(self, batter, pitcher):
+    def outcome_table(self, batter, pitcher, park_factor=1.0):
         self.plate_appearances.append(batter.key)
         return [(1.0, batter.outcome)]
 
@@ -113,18 +113,21 @@ class BaseRunningTest(unittest.TestCase):
         used = []
         original = sim.play_half_inning
 
-        def recording(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=None, steal_odds=None):
-            used.append((offense.lineup[0].key[0], reach_on_error, steal_odds))
+        def recording(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=None, steal_odds=None,
+                     park_factor=None):
+            used.append((offense.lineup[0].key[0], reach_on_error, steal_odds, park_factor))
             return 0
 
         sim.play_half_inning = recording
         try:
-            home = sim.TeamPlan("h", [player("h1")], player("h-sp"), [], reach_on_error=0.01, steal_odds=0.8)
-            away = sim.TeamPlan("a", [player("a1")], player("a-sp"), [], reach_on_error=0.05, steal_odds=1.3)
+            home = sim.TeamPlan("h", [player("h1")], player("h-sp"), [], reach_on_error=0.01, steal_odds=0.8,
+                                park_factor=1.1)
+            away = sim.TeamPlan("a", [player("a1")], player("a-sp"), [], reach_on_error=0.05, steal_odds=1.3,
+                                park_factor=0.9)  # 원정팀 구장 요인은 안 쓰인다 (항상 홈팀 구장)
             sim.simulate_game(ScriptedModel(), home, away, random.Random(0))
         finally:
             sim.play_half_inning = original
-        self.assertEqual(set(used), {("a", 0.01, 0.8), ("h", 0.05, 1.3)})  # 원정 공격 = 홈 수비
+        self.assertEqual(set(used), {("a", 0.01, 0.8, 1.1), ("h", 0.05, 1.3, 1.1)})  # 원정 공격 = 홈 수비, 둘 다 홈팀 구장
 
 
 class ModelTest(unittest.TestCase):
@@ -267,6 +270,72 @@ class TeamFieldingTest(unittest.TestCase):
         model = sim.Model()
         self.assertEqual(model.reach_on_error("LG"), sim.P_REACH_ON_ERROR)
         self.assertEqual(model.warnings, [])
+
+
+class ParkFactorTest(unittest.TestCase):
+
+    def test_hitter_park_scores_more_than_it_allows_on_road(self):
+        # A 는 홈에서 원정보다 득점이 많이 남 (타자 친화적), B 는 그 반대
+        games = (
+            [{"status": "final", "home": "A", "away": "B", "home_score": "6", "away_score": "6"}] * 30
+            + [{"status": "final", "home": "B", "away": "A", "home_score": "4", "away_score": "4"}] * 30)
+        factors = sim._team_park_factors(games)
+
+        self.assertGreater(factors["A"], 1)
+        self.assertLess(factors["B"], 1)
+
+    def test_thin_sample_is_regressed_toward_one(self):
+        games = ([{"status": "final", "home": "A", "away": "B", "home_score": "10", "away_score": "10"}]
+                 + [{"status": "final", "home": "B", "away": "A", "home_score": "2", "away_score": "2"}])
+        factors = sim._team_park_factors(games)
+
+        self.assertAlmostEqual(factors["A"], 1.0, delta=0.05)  # 경기 2개로는 거의 리그 평균
+
+    def test_team_without_both_home_and_away_games_is_skipped(self):
+        games = [{"status": "final", "home": "A", "away": "B", "home_score": "5", "away_score": "5"}]
+        self.assertEqual(sim._team_park_factors(games), {})  # A 는 원정 경기가, B 는 홈경기가 없음
+
+    def test_park_factor_shifts_hit_probability_without_touching_k_or_bb(self):
+        model = sim.Model()
+        batter, pitcher = model.batter("LG", "오스틴"), model.pitcher("KT", "고영표")
+        neutral = model._build_outcome_table(batter, pitcher, park_factor=1.0)
+        hitter_park = model._build_outcome_table(batter, pitcher, park_factor=1.2)
+
+        def prob(table, outcome):
+            previous = 0.0
+            for cumulative, o in table:
+                if o == outcome:
+                    return cumulative - previous
+                previous = cumulative
+
+        self.assertGreater(prob(hitter_park, "single") + prob(hitter_park, "double")
+                           + prob(hitter_park, "triple") + prob(hitter_park, "homerun"),
+                           prob(neutral, "single") + prob(neutral, "double")
+                           + prob(neutral, "triple") + prob(neutral, "homerun"))
+        self.assertAlmostEqual(prob(hitter_park, "k"), prob(neutral, "k"))
+        self.assertAlmostEqual(prob(hitter_park, "bb"), prob(neutral, "bb"))
+
+    def test_simulate_game_uses_home_teams_park_for_both_sides(self):
+        used = []
+        original = sim.Model.outcome_table
+
+        def recording(self, batter, pitcher, park_factor=1.0):
+            used.append(park_factor)
+            return original(self, batter, pitcher, park_factor)
+
+        sim.Model.outcome_table = recording
+        try:
+            model = sim.Model()
+            home = model.team_plan({"team": "LG", "lineup": ["박동원", "오스틴", "문보경", "오지환", "김현수",
+                                    "박해민", "송찬의", "신민재", "구본혁"], "starter": "임찬규"})
+            away = model.team_plan({"team": "KT", "lineup": ["김민혁", "강백호", "허경민", "로하스", "장성우",
+                                    "황재균", "배정대", "김상수", "권동진"], "starter": "고영표"})
+            home = replace(home, park_factor=1.15)
+            sim.simulate_game(model, home, away, random.Random(0))
+        finally:
+            sim.Model.outcome_table = original
+        self.assertTrue(used)
+        self.assertTrue(all(p == 1.15 for p in used))
 
 
 class RunTest(unittest.TestCase):

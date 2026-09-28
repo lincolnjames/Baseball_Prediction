@@ -18,6 +18,8 @@ KBO 경기 몬테카를로 시뮬레이션.
 6. 인플레이 아웃의 실책 출루 확률은 수비 팀의 이닝당 실책을 리그 평균 쪽으로 회귀시켜 반영한다.
 7. 주루 기록이 있으면 1루에 나간 주자가 선수별 시도율로 2루 도루를 시도하고,
    성공률은 주자 성공률과 수비 팀(포수)의 도루 허용률을 odds ratio 로 결합한다.
+8. 경기 결과(games.csv)가 있으면, 경기는 항상 홈팀 구장에서 열린다고 보고 그 팀의
+   홈/원정 득점 비율(표본이 적으면 1.0 쪽으로 회귀)만큼 안타 확률을 올리거나 내린다.
 """
 import csv
 import json
@@ -70,6 +72,11 @@ STEAL_DEFENSE_REG = 100    # 팀 도루 허용률 회귀 (상대 시도 횟수)
 # 1루 출루당 시도율 → 시뮬레이션 시도 확률 배수. 2루가 차 있는 출루는 기회가 아니고 3루 도루도 2루 도루로
 # 합쳐 세므로, 2026 팀 기본 라인업 시뮬레이션의 경기당 시도(0.85)가 실제(0.846)와 같아지도록 맞췄다.
 STEAL_ATTEMPT_SCALE = 1.5
+
+# 구장 요인 (games.csv 가 있을 때만): 팀의 홈경기 득점 ÷ 원정경기 득점 비율을 그 팀 홈구장의
+# 요인으로 보고, 안타 확률에 곱한다. 한 시즌 표본으로는 매우 불안정하므로(실제 여러 시즌을 섞어 쓰는
+# 것이 보통이다) 게임 수 기준으로 크게 회귀시킨다.
+PARK_REG_GAMES = 400
 
 MAX_INNINGS = 11           # KBO 2025 정규시즌: 연장 11회까지, 동점이면 무승부
 MAX_CLOSER_LEAD = 3        # 9회 이후 이 점수 차 이내 리드(또는 동점)면 마무리 등판
@@ -139,6 +146,7 @@ class TeamPlan:
     closer: Pitcher = None
     reach_on_error: float = P_REACH_ON_ERROR  # 이 팀이 수비할 때 인플레이 아웃이 실책 출루가 될 확률
     steal_odds: float = 1.0  # 이 팀이 수비할 때 상대 도루 성공 odds 배수 (리그 평균 1, 포수 어깨가 좋으면 < 1)
+    park_factor: float = 1.0  # 이 팀 홈구장의 득점 환경 배수 (홈팀일 때만 쓰인다)
 
 
 class Model:
@@ -170,6 +178,9 @@ class Model:
         running = _read_csv(data_dir, "running.csv") if os.path.exists(os.path.join(data_dir, "running.csv")) else []
         self._running = {(r["Team"], r["Player"]): r for r in running}
         self.league_steal = _league_steal(hitters, self._running) if running else None
+        # 경기 결과(games.csv)도 선택: 없으면 모든 팀이 구장 요인 없이(1.0) 계산
+        games = _read_csv(data_dir, "games.csv") if os.path.exists(os.path.join(data_dir, "games.csv")) else []
+        self.park_factors = _team_park_factors(games)
         self.warnings = []
         self._outcome_cache = {}
 
@@ -210,6 +221,9 @@ class Model:
 
     def steal_odds(self, team):
         return self.steal_factors.get(team, 1.0)
+
+    def park_factor(self, team):
+        return self.park_factors.get(team, 1.0)
 
     def pitcher(self, team, name):
         row = self._find(self._pitchers, team, name, "투수")
@@ -256,14 +270,15 @@ class Model:
 
     # ---------- 타석 결과 확률 ----------
 
-    def outcome_table(self, batter, pitcher):
-        """(누적확률, 결과) 목록. 결과: k, bb, single, double, triple, homerun, out"""
-        cache_key = (batter.key, pitcher.key)
+    def outcome_table(self, batter, pitcher, park_factor=1.0):
+        """(누적확률, 결과) 목록. 결과: k, bb, single, double, triple, homerun, out.
+        park_factor 는 경기가 열리는 구장(항상 홈팀 구장)의 득점 환경 배수."""
+        cache_key = (batter.key, pitcher.key, park_factor)
         if cache_key not in self._outcome_cache:
-            self._outcome_cache[cache_key] = self._build_outcome_table(batter, pitcher)
+            self._outcome_cache[cache_key] = self._build_outcome_table(batter, pitcher, park_factor)
         return self._outcome_cache[cache_key]
 
-    def _build_outcome_table(self, batter, pitcher):
+    def _build_outcome_table(self, batter, pitcher, park_factor=1.0):
         lp = self.league_pitcher
         b = dict(batter.rates)
         if pitcher.ptype:
@@ -281,6 +296,12 @@ class Model:
         weights = {e: b[e] * p[e] / lp[e] for e in EVENTS}
         total = sum(weights.values())
         probs = {e: w / total for e, w in weights.items()}
+
+        if park_factor != 1.0:  # 구장 요인은 안타 확률만 조정한다 (삼진·볼넷 비율은 그대로)
+            shift = probs["h"] * (park_factor - 1)
+            shift = max(min(shift, probs["out"] - 0.01), -probs["h"] * 0.9)  # h·out 모두 0 근처에서 안전하게
+            probs["h"] += shift
+            probs["out"] -= shift
 
         xbh = min(batter.xb_per_hit / XB_PER_XBH, 0.7)
         hr_factor = pitcher.hr_per_hit / lp["hr_per_hit"]
@@ -319,6 +340,7 @@ class Model:
             closer=self.pitcher(team, spec["closer"]) if spec.get("closer") else None,
             reach_on_error=self.reach_on_error(team),
             steal_odds=self.steal_odds(team),
+            park_factor=self.park_factor(team),
         )
 
 
@@ -494,6 +516,33 @@ def _odds(p):
     return p / (1 - p)
 
 
+def _team_park_factors(games):
+    """경기 결과(games.csv) → 팀 → 그 팀 홈구장의 득점 환경 배수 (표본 회귀 후).
+
+    구장이 아니라 홈팀 기준으로 묶는다 — 한 팀이 시즌 중 보조 구장(예: 삼성 포항, 한화 청주)에서도
+    홈경기를 치르므로, "이 팀 홈경기에서 나온 득점"을 그 팀의 구장 요인으로 본다.
+    같은 팀의 원정경기 득점과 비교해 그 팀 자체의 공격·수비력을 상쇄한다 (전통적인 구장 요인 공식).
+    """
+    final = [g for g in games if g.get("status") == "final" and g.get("home_score") and g.get("away_score")]
+    home, away = defaultdict(lambda: [0, 0]), defaultdict(lambda: [0, 0])
+    for g in final:
+        runs = int(g["home_score"]) + int(g["away_score"])
+        home[g["home"]][0] += runs
+        home[g["home"]][1] += 1
+        away[g["away"]][0] += runs
+        away[g["away"]][1] += 1
+
+    factors = {}
+    for team, (home_runs, home_games) in home.items():
+        away_runs, away_games = away.get(team, (0, 0))
+        if home_games <= 0 or away_games <= 0:
+            continue
+        ratio = (home_runs / home_games) / (away_runs / away_games)
+        n = home_games + away_games
+        factors[team] = _regress(ratio, n, 1.0, PARK_REG_GAMES)
+    return factors
+
+
 def _first_base_arrivals(row):
     """1루 출루 횟수 (단타 + 볼넷 + 사구). 원시 기록이 없으면 안타의 75% 를 단타로 추정한다."""
     if _num(row, "H") is not None and _num(row, "BB") is not None:
@@ -584,14 +633,15 @@ class Staff:
 
 
 def play_half_inning(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=P_REACH_ON_ERROR,
-                     steal_odds=1.0):
+                     steal_odds=1.0, park_factor=1.0):
     """반 이닝 득점. runs_to_win 이 있으면 끝내기 점수에 도달하는 즉시 종료한다.
-    reach_on_error, steal_odds 는 수비 팀의 실책 출루 확률과 상대 도루 성공 odds 배수."""
+    reach_on_error, steal_odds 는 수비 팀의 실책 출루 확률과 상대 도루 성공 odds 배수.
+    park_factor 는 경기가 열리는 구장(항상 홈팀 구장)의 득점 환경 배수."""
     runs, outs = 0, 0
     bases = [False, False, False]
     while outs < 3:
         batter = offense.next_batter()
-        table = model.outcome_table(batter, pitcher)
+        table = model.outcome_table(batter, pitcher, park_factor)
         r = rng.random()
         outcome = next((o for cum, o in table if r < cum), table[-1][1])
         scored, bases, outs = advance_runners(outcome, bases, outs, rng, reach_on_error, batter)
@@ -683,9 +733,12 @@ def simulate_game(model, home, away, rng):
     home_staff, away_staff = Staff(home, rng), Staff(away, rng)
     home_score = away_score = 0
 
+    # 경기는 항상 홈팀 구장에서 열리므로, 구장 요인은 양 팀 공격 모두에 같은 값을 쓴다
+    park_factor = home.park_factor
     for inning in range(1, MAX_INNINGS + 1):
         pitcher = home_staff.pitcher_for(inning, home_score - away_score)
-        away_score += play_half_inning(model, away_bats, pitcher, rng, None, home.reach_on_error, home.steal_odds)
+        away_score += play_half_inning(model, away_bats, pitcher, rng, None, home.reach_on_error, home.steal_odds,
+                                       park_factor)
 
         if inning >= 9 and home_score > away_score:
             break  # 9회말 이후 홈팀이 이기고 있으면 말 공격 없음
@@ -693,7 +746,7 @@ def simulate_game(model, home, away, rng):
         pitcher = away_staff.pitcher_for(inning, away_score - home_score)
         runs_to_win = away_score - home_score + 1 if inning >= 9 else None
         home_score += play_half_inning(model, home_bats, pitcher, rng, runs_to_win, away.reach_on_error,
-                                       away.steal_odds)
+                                       away.steal_odds, park_factor)
 
         if inning >= 9 and home_score != away_score:
             break
