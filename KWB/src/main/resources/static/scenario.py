@@ -28,6 +28,7 @@ import random
 import sys
 import time
 from collections import defaultdict
+from dataclasses import replace
 
 import simulation as sim
 
@@ -190,7 +191,7 @@ def run_value(model, batter, staff):
 def swap_lineup(plan, slot, batter):
     lineup = list(plan.lineup)
     lineup[slot] = batter
-    return sim.TeamPlan(plan.team, lineup, plan.starter, plan.middle, plan.closer)
+    return replace(plan, lineup=lineup)
 
 
 def analyze(args):

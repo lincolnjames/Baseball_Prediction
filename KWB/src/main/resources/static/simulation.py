@@ -5,7 +5,7 @@ KBO 경기 몬테카를로 시뮬레이션.
 입력:  {"home": Team, "away": Team, "match_count": 1000, "seed": null, "data_dir": null}
        Team = {"team": "LG", "lineup": [타자 9명], "starter": "선발",
                "middle": ["중간계투", ...], "closer": "마무리" 또는 null}
-       data_dir = hitters.csv, pitchers.csv 가 있는 폴더 (없으면 이 파일이 있는 폴더의 기본 데이터)
+       data_dir = hitters.csv, pitchers.csv (선택: fielding.csv) 가 있는 폴더 (없으면 이 파일이 있는 폴더의 기본 데이터)
 출력:  결과 JSON 한 줄 (표준출력)
 
 모델 요약
@@ -15,6 +15,7 @@ KBO 경기 몬테카를로 시뮬레이션.
    쪽으로 회귀시켜 반영한다.
 4. 타자·투수 확률을 odds ratio(Log5 일반화)로 결합한다: P(e) ∝ 타자(e) × 투수(e) / 리그(e)
 5. 안타 종류는 타자의 안타당 추가 루타((SLG-AVG)/AVG)와 투수의 피홈런 비율로 나눈다.
+6. 인플레이 아웃의 실책 출루 확률은 수비 팀의 이닝당 실책을 리그 평균 쪽으로 회귀시켜 반영한다.
 """
 import csv
 import json
@@ -55,7 +56,10 @@ P_DOUBLE_1B_SCORES = (0.40, 0.65)  # 2루타 때 1루 주자 득점
 P_DOUBLE_PLAY = 0.15       # 1루 주자 있고 2아웃 미만일 때 인플레이 아웃이 병살이 될 확률
 P_SAC_FLY = 0.35           # 3루 주자 있고 2아웃 미만일 때 인플레이 아웃으로 득점
 P_OUT_2B_TO_3B = 0.25      # 인플레이 아웃 때 2루 주자 3루 진루
-P_REACH_ON_ERROR = 0.03    # 인플레이 아웃이 실책 출루가 될 확률 (주자는 한 베이스씩 진루)
+# 인플레이 아웃이 실책 출루가 될 확률 (주자는 한 베이스씩 진루). 모델에서 실책의 영향은 이것뿐이므로
+# 실책으로 생긴 득점 비율이 실제 비자책점 비율(2026 KBO 9.1%)과 같아지도록 맞춘 리그 평균값이다.
+P_REACH_ON_ERROR = 0.034
+ERROR_REG_INN = 2000       # 팀 실책률 회귀 (이닝): 한 시즌 팀 실책 차이는 대부분 우연 수준이라 강하게 회귀
 
 MAX_INNINGS = 11           # KBO 2025 정규시즌: 연장 11회까지, 동점이면 무승부
 MAX_CLOSER_LEAD = 3        # 9회 이후 이 점수 차 이내 리드(또는 동점)면 마무리 등판
@@ -121,6 +125,7 @@ class TeamPlan:
     starter: Pitcher
     middle: list
     closer: Pitcher = None
+    reach_on_error: float = P_REACH_ON_ERROR  # 이 팀이 수비할 때 인플레이 아웃이 실책 출루가 될 확률
 
 
 class Model:
@@ -144,6 +149,10 @@ class Model:
         self.pitcher_platoon = _league_platoon(
             (_lookup_type(self._ptypes, r["Team"], r["Player"]), split, diff)
             for r in pitchers for split, diff in _pitcher_split_diffs(r).items())
+        # 팀 수비 기록(fielding.csv)은 선택: 없으면 모든 팀이 리그 평균 실책률
+        fielding_path = os.path.join(data_dir, "fielding.csv")
+        self.error_factors = _team_error_factors(_read_csv(data_dir, "fielding.csv")) \
+            if os.path.exists(fielding_path) else {}
         self.warnings = []
         self._outcome_cache = {}
 
@@ -186,6 +195,14 @@ class Model:
         g = _num(row, "G") or 0
         starter_innings = obs["ip"] / g if g > 0 else DEFAULT_STARTER_INNINGS
         return Pitcher((team, name), rates, splits, hr_per_hit, starter_innings, ptype)
+
+    def reach_on_error(self, team):
+        if not self.error_factors:
+            return P_REACH_ON_ERROR
+        if team not in self.error_factors:
+            self._warn(f"수비 {team or '팀 미지정'}: 팀 실책 기록 없음 → 리그 평균 실책률로 계산")
+            return P_REACH_ON_ERROR
+        return P_REACH_ON_ERROR * self.error_factors[team]
 
     def _find(self, index, team, name, role):
         by_key, by_name = index
@@ -265,6 +282,7 @@ class Model:
             starter=self.pitcher(team, spec["starter"]),
             middle=[self.pitcher(team, n) for n in spec.get("middle") or []],
             closer=self.pitcher(team, spec["closer"]) if spec.get("closer") else None,
+            reach_on_error=self.reach_on_error(team),
         )
 
 
@@ -406,6 +424,19 @@ def _pitcher_observed(row, default_whip):
             "ip": ip}
 
 
+def _team_error_factors(rows):
+    """팀 수비 기록(Team, E, INN) → 팀 → 리그 평균 대비 실책률 배수 (표본 회귀 후)"""
+    teams = {r["Team"]: ((_num(r, "E") or 0), innings(_num(r, "INN") or 0)) for r in rows}
+    total_inn = sum(inn for _, inn in teams.values())
+    if total_inn <= 0:
+        return {}
+    league = sum(e for e, _ in teams.values()) / total_inn
+    if league <= 0:
+        return {}
+    return {team: _regress(e / inn if inn else league, inn, league, ERROR_REG_INN) / league
+            for team, (e, inn) in teams.items()}
+
+
 def _league_batter(rows):
     total = defaultdict(float)
     for r in rows:
@@ -478,22 +509,23 @@ class Staff:
         return pitcher
 
 
-def play_half_inning(model, offense, pitcher, rng, runs_to_win=None):
-    """반 이닝 득점. runs_to_win 이 있으면 끝내기 점수에 도달하는 즉시 종료한다."""
+def play_half_inning(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=P_REACH_ON_ERROR):
+    """반 이닝 득점. runs_to_win 이 있으면 끝내기 점수에 도달하는 즉시 종료한다.
+    reach_on_error 는 수비 팀의 실책 출루 확률."""
     runs, outs = 0, 0
     bases = [False, False, False]
     while outs < 3:
         table = model.outcome_table(offense.next_batter(), pitcher)
         r = rng.random()
         outcome = next((o for cum, o in table if r < cum), table[-1][1])
-        scored, bases, outs = advance_runners(outcome, bases, outs, rng)
+        scored, bases, outs = advance_runners(outcome, bases, outs, rng, reach_on_error)
         runs += scored
         if runs_to_win is not None and runs >= runs_to_win:
             break
     return runs
 
 
-def advance_runners(outcome, bases, outs, rng):
+def advance_runners(outcome, bases, outs, rng, reach_on_error=P_REACH_ON_ERROR):
     """(득점, 새 주자 상태, 아웃 수)"""
     first, second, third = bases
     if outcome == "k":
@@ -506,7 +538,7 @@ def advance_runners(outcome, bases, outs, rng):
     two_out = outs == 2
 
     if outcome == "out":
-        if rng.random() < P_REACH_ON_ERROR:
+        if rng.random() < reach_on_error:
             return int(third), [True, first, second], outs
         if first and outs < 2 and rng.random() < P_DOUBLE_PLAY:
             outs += 2
@@ -563,14 +595,14 @@ def simulate_game(model, home, away, rng):
 
     for inning in range(1, MAX_INNINGS + 1):
         pitcher = home_staff.pitcher_for(inning, home_score - away_score)
-        away_score += play_half_inning(model, away_bats, pitcher, rng)
+        away_score += play_half_inning(model, away_bats, pitcher, rng, reach_on_error=home.reach_on_error)
 
         if inning >= 9 and home_score > away_score:
             break  # 9회말 이후 홈팀이 이기고 있으면 말 공격 없음
 
         pitcher = away_staff.pitcher_for(inning, away_score - home_score)
         runs_to_win = away_score - home_score + 1 if inning >= 9 else None
-        home_score += play_half_inning(model, home_bats, pitcher, rng, runs_to_win)
+        home_score += play_half_inning(model, home_bats, pitcher, rng, runs_to_win, away.reach_on_error)
 
         if inning >= 9 and home_score != away_score:
             break

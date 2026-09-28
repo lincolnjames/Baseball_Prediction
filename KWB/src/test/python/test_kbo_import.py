@@ -187,6 +187,11 @@ class PositionsTest(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("수비율", problems[0])
 
+    def test_team_fielding_counts_every_position_including_pitchers(self):
+        fielding = ki.build_fielding(complete_folder(**{"defense.txt": DEFENSE}), 2026)
+        # 실책 5+2+0+1+0, 수비 아웃 (700 + 400 1/3 + 20 + 120 + 1) × 3 = 3724 → 9개 포지션으로 나눠 414 아웃
+        self.assertEqual(fielding, [{"Year": 2026, "Team": "KT", "E": 8, "INN": "138.0"}])
+
 
 class SimulationWithRawCountsTest(unittest.TestCase):
 
