@@ -1,176 +1,149 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
 <head>
 <meta charset="UTF-8" />
-<title>Match Detail - 선수 선택</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title th:text="${awayTeam} + ' @ ' + ${homeTeam} + ' — 라인업'">라인업</title>
+<link rel="stylesheet" th:href="@{/css/kwb.css}" />
 <style>
-  body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: #f7f9fc;
-    margin: 0;
-    padding: 20px;
+  body { padding-bottom: 96px; }
+  .matchup-head {
+    display: flex; align-items: center; justify-content: center; gap: 18px;
+    margin: 4px 0 6px; flex-wrap: wrap;
   }
-  h1 {
-    text-align: center;
-    color: #2c3e50;
-    margin-bottom: 40px;
+  .matchup-head .side { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .matchup-head .side .name { font-weight: 800; font-size: 16px; }
+  .matchup-head .tag { font-size: 11.5px; color: var(--text-muted); font-weight: 700; }
+  .matchup-head .at { color: var(--text-faint); font-weight: 800; font-size: 15px; }
+
+  .team-panels { display: flex; gap: 18px; flex-wrap: wrap; }
+  .team-panel { flex: 1 1 420px; min-width: 320px; }
+  .team-panel h2 { font-size: 15px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .role-title {
+    font-size: 12px; font-weight: 800; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: .04em; margin: 16px 0 8px;
   }
-  .team-container {
-    display: flex;
-    justify-content: space-around;
-    gap: 20px;
-    flex-wrap: wrap;
+  .role-title:first-of-type { margin-top: 6px; }
+  .player-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 6px 0; border-bottom: 1px solid var(--border);
   }
-  .player-list {
-    background-color: #ffffff;
-    border: 1px solid #ddd;
-    border-radius: 12px;
-    padding: 20px;
-    width: 45%;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-  }
-  .player-list h2 {
-    color: #34495e;
-    margin-bottom: 10px;
-    border-bottom: 2px solid #3498db;
-    padding-bottom: 5px;
-  }
-  .player-list h3 {
-    color: #2c3e50;
-    margin-top: 20px;
-    margin-bottom: 10px;
-  }
+  .player-row:last-child { border-bottom: none; }
   .btnPlayer {
-    background-color: #3498db;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 12px 24px;
-    margin: 6px;
-    cursor: pointer;
-    font-size: 16px;
-    min-width: 120px;
-    transition: background-color 0.3s ease;
-    display: inline-block;
-    text-align: center;
+    flex: 1; text-align: left; background: var(--surface-alt); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 8px 12px; font-size: 13.5px; font-weight: 700;
+    color: var(--text); cursor: pointer; transition: all .15s;
   }
-  .btnPlayer.active {
-    background-color: #2ecc71;
-    color: white;
-    font-weight: bold;
-    box-shadow: 0 0 8px #27ae60;
+  .btnPlayer:hover { border-color: #c7d0e0; }
+  .btnPlayer.active { background: #ecfdf5; border-color: var(--success); color: var(--success); }
+  .player-row select { flex: none; width: 108px; }
+
+  #runSimulationBar {
+    position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 20px;
+    background: linear-gradient(0deg, #fff 70%, rgba(255,255,255,0));
+    display: flex; justify-content: center; z-index: 20;
   }
-  .btnPlayer:hover {
-    background-color: #2980b9;
-  }
-  #runSimulationBtn {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    background-color: #e74c3c;
-    color: white;
-    border: none;
-    border-radius: 12px;
-    padding: 16px 48px;
-    font-size: 18px;
-    font-weight: bold;
-    cursor: pointer;
-    box-shadow: 0 6px 12px rgba(231, 76, 60, 0.6);
-    transition: background-color 0.3s ease;
-    z-index: 1000;
-  }
-  #runSimulationBtn:hover {
-    background-color: #c0392b;
-  }
-  #simulationResult {
-    margin: 40px auto 0 auto;
-    padding: 24px;
-    background: #f8f8ff;
-    border-radius: 10px;
-    width: 60%;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.07);
-    font-size: 16px;
-    color: #222;
-  }
+  #runSimulationBtn { min-width: 220px; }
+  #simulationResult:empty { display: none; }
+  .result-prob { font-size: 15px; margin: 4px 0; }
 </style>
 </head>
 <body th:data-home-team="${homeTeam}" th:data-away-team="${awayTeam}">
 
-<h1 th:text="${awayTeam} + ' (원정) vs ' + ${homeTeam} + ' (홈)'">경기 선수 선택</h1>
-<p style="text-align:center">
-  <a th:href="@{/match/predict(hometeam=${homeTeam},awayteam=${awayTeam})}">라인업 시나리오 분석 · 확정 예측 화면으로 →</a>
-</p>
+<header th:replace="~{fragments/header :: nav(active='schedule')}"></header>
 
-<div class="team-container">
-  <!-- 홈팀 -->
-  <div class="player-list" id="homeTeam">
-    <h2 th:text="${homeTeam} + ' (홈)'">홈팀 선수 목록</h2>
+<div class="page">
+  <div class="matchup-head">
+    <div class="side">
+      <span class="badge badge-lg" th:data-team="${awayTeam}" th:text="${awayTeam}">원정</span>
+      <span class="name" th:text="${awayTeam}">원정팀</span>
+      <span class="tag">원정</span>
+    </div>
+    <div class="at">@</div>
+    <div class="side">
+      <span class="badge badge-lg" th:data-team="${homeTeam}" th:text="${homeTeam}">홈</span>
+      <span class="name" th:text="${homeTeam}">홈팀</span>
+      <span class="tag">홈</span>
+    </div>
+  </div>
+  <p class="center">
+    <a th:href="@{/match/predict(hometeam=${homeTeam},awayteam=${awayTeam})}">라인업 시나리오 분석 · 확정 예측 화면으로 →</a>
+  </p>
 
-    <h3>타자</h3>
-    <div id="homeHittersContainer">
-      <div class="player-row" th:each="hitter : ${homeHitters}">
-        <button type="button" class="btnPlayer" th:text="${hitter.player}"></button>
-        <select class="battingOrderSelect">
-          <option value="">--선택--</option>
-          <option th:each="i : ${#numbers.sequence(1,9)}"
-                  th:value="${i}" th:text="${i} + '번 타자'"></option>
-        </select>
+  <div class="team-panels">
+    <!-- 홈팀 -->
+    <div class="card team-panel" id="homeTeam">
+      <h2><span class="badge badge-sm" th:data-team="${homeTeam}" th:text="${homeTeam}"></span>
+        <span th:text="${homeTeam} + ' (홈)'">홈팀 선수 목록</span></h2>
+
+      <div class="role-title">타자</div>
+      <div id="homeHittersContainer">
+        <div class="player-row" th:each="hitter : ${homeHitters}">
+          <button type="button" class="btnPlayer" th:text="${hitter.player}"></button>
+          <select class="battingOrderSelect">
+            <option value="">타순 선택</option>
+            <option th:each="i : ${#numbers.sequence(1,9)}"
+                    th:value="${i}" th:text="${i} + '번 타자'"></option>
+          </select>
+        </div>
+      </div>
+
+      <div class="role-title">투수</div>
+      <div id="homePitchersContainer">
+        <div class="player-row" th:each="pitcher : ${homePitchers}">
+          <button type="button" class="btnPlayer" th:text="${pitcher.player}"></button>
+          <select class="pitchingOrderSelect">
+            <option value="">역할 선택</option>
+            <option value="1">선발투수</option>
+            <option value="2">중간계투1</option>
+            <option value="3">중간계투2</option>
+            <option value="4">중간계투3</option>
+            <option value="5">마무리투수</option>
+          </select>
+        </div>
       </div>
     </div>
 
-    <h3>투수</h3>
-    <div id="homePitchersContainer">
-      <div class="player-row" th:each="pitcher : ${homePitchers}">
-        <button type="button" class="btnPlayer" th:text="${pitcher.player}"></button>
-        <select class="pitchingOrderSelect">
-			<option value="">--선택--</option>
-		    <option value="1">선발투수</option>
-		    <option value="2">중간계투1</option>
-		    <option value="3">중간계투2</option>
-		    <option value="4">중간계투3</option>
-		    <option value="5">마무리투수</option>
-        </select>
+    <!-- 어웨이팀 -->
+    <div class="card team-panel" id="awayTeam">
+      <h2><span class="badge badge-sm" th:data-team="${awayTeam}" th:text="${awayTeam}"></span>
+        <span th:text="${awayTeam} + ' (원정)'">어웨이팀 선수 목록</span></h2>
+
+      <div class="role-title">타자</div>
+      <div id="awayHittersContainer">
+        <div class="player-row" th:each="hitter : ${awayHitters}">
+          <button type="button" class="btnPlayer" th:text="${hitter.player}"></button>
+          <select class="battingOrderSelect">
+            <option value="">타순 선택</option>
+            <option th:each="i : ${#numbers.sequence(1,9)}"
+                    th:value="${i}" th:text="${i} + '번 타자'"></option>
+          </select>
+        </div>
+      </div>
+
+      <div class="role-title">투수</div>
+      <div id="awayPitchersContainer">
+        <div class="player-row" th:each="pitcher : ${awayPitchers}">
+          <button type="button" class="btnPlayer" th:text="${pitcher.player}"></button>
+          <select class="pitchingOrderSelect">
+            <option value="">역할 선택</option>
+            <option value="1">선발투수</option>
+            <option value="2">중간계투1</option>
+            <option value="3">중간계투2</option>
+            <option value="4">중간계투3</option>
+            <option value="5">마무리투수</option>
+          </select>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- 어웨이팀 -->
-  <div class="player-list" id="awayTeam">
-    <h2 th:text="${awayTeam} + ' (원정)'">어웨이팀 선수 목록</h2>
-
-    <h3>타자</h3>
-    <div id="awayHittersContainer">
-      <div class="player-row" th:each="hitter : ${awayHitters}">
-        <button type="button" class="btnPlayer" th:text="${hitter.player}"></button>
-        <select class="battingOrderSelect">
-          <option value="">--선택--</option>
-          <option th:each="i : ${#numbers.sequence(1,9)}"
-                  th:value="${i}" th:text="${i} + '번 타자'"></option>
-        </select>
-      </div>
-    </div>
-
-    <h3>투수</h3>
-	<div id="awayPitchersContainer">
-	  <div class="player-row" th:each="pitcher : ${awayPitchers}">
-	    <button type="button" class="btnPlayer" th:text="${pitcher.player}"></button>
-	    <select class="pitchingOrderSelect">
-	      <option value="">--선택--</option>
-	      <option value="1">선발투수</option>
-	      <option value="2">중간계투1</option>
-	      <option value="3">중간계투2</option>
-	      <option value="4">중간계투3</option>
-	      <option value="5">마무리투수</option>
-	    </select>
-	  </div>
-	</div>
-  </div>
+  <div id="simulationResult" class="card"></div>
 </div>
 
-<button id="runSimulationBtn" type="button">시뮬레이션 실행</button>
-
-<div id="simulationResult"></div>
+<div id="runSimulationBar">
+  <button id="runSimulationBtn" class="btn btn-primary btn-lg" type="button">시뮬레이션 실행</button>
+</div>
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
@@ -256,7 +229,8 @@ document.addEventListener('DOMContentLoaded', () => {
       matchCount: 1000
     };
 
-    document.getElementById('simulationResult').innerHTML = "<b>시뮬레이션 실행 중...</b>";
+    runSimBtn.disabled = true;
+    document.getElementById('simulationResult').innerHTML = "<b>시뮬레이션 실행 중…</b>";
 
     try {
       const response = await fetch('/simulation/run', {
@@ -274,16 +248,22 @@ document.addEventListener('DOMContentLoaded', () => {
       const home = escapeHtml(homeTeam);
       const away = escapeHtml(awayTeam);
       const warnings = (result.warnings || []).map(w => `<li>${escapeHtml(w)}</li>`).join('');
+      const homePct = (result.home_win_rate * 100).toFixed(1);
+      const awayPct = (result.away_win_rate * 100).toFixed(1);
       document.getElementById('simulationResult').innerHTML = `
-        <h3>시뮬레이션 결과 (${result.match_count}경기)</h3>
-        <div>${home} 승률: ${(result.home_win_rate * 100).toFixed(1)}% (${result.home_win_count}승)</div>
-        <div>${away} 승률: ${(result.away_win_rate * 100).toFixed(1)}% (${result.away_win_count}승)</div>
-        <div>무승부: ${(result.draw_rate * 100).toFixed(1)}% (${result.draw_count}경기)</div>
-        <div>평균 득점: ${home} ${result.home_avg_score.toFixed(2)} : ${result.away_avg_score.toFixed(2)} ${away}</div>
-        ${warnings ? `<div style="margin-top:12px;color:#b45309">주의<ul>${warnings}</ul></div>` : ''}
+        <h3 class="card-title">시뮬레이션 결과 (${result.match_count.toLocaleString()}경기)</h3>
+        <div class="prob-bar">
+          <div class="seg away" data-team="${away}" style="width:${awayPct}%">${away} ${awayPct}%</div>
+          <div class="seg home" data-team="${home}" style="width:${homePct}%">${home} ${homePct}%</div>
+        </div>
+        <div class="result-prob muted">무승부: ${(result.draw_rate * 100).toFixed(1)}% (${result.draw_count}경기)</div>
+        <div class="result-prob">평균 득점 <b>${away} ${result.away_avg_score.toFixed(2)} : ${result.home_avg_score.toFixed(2)} ${home}</b></div>
+        ${warnings ? `<div class="card alert-warn" style="margin-top:12px">주의<ul>${warnings}</ul></div>` : ''}
       `;
     } catch (err) {
-      document.getElementById('simulationResult').innerHTML = "<b>오류가 발생했습니다: " + escapeHtml(err.message) + "</b>";
+      document.getElementById('simulationResult').innerHTML = "<b class=\"error-text\">오류가 발생했습니다: " + escapeHtml(err.message) + "</b>";
+    } finally {
+      runSimBtn.disabled = false;
     }
   });
 });

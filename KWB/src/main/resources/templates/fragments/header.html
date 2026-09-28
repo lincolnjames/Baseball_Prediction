@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<body>
+  <!-- 공통 상단바. active: schedule | predictions -->
+  <header class="app-header" th:fragment="nav(active)">
+    <div class="app-header-inner">
+      <a class="brand" href="/"><span class="brand-mark">⚾</span> KWB 승부예측</a>
+      <nav class="app-nav">
+        <a href="/" th:classappend="${active == 'schedule'} ? ' active'">경기 일정</a>
+        <a href="/predictions" th:classappend="${active == 'predictions'} ? ' active'">예측 성적</a>
+      </nav>
+    </div>
+  </header>
+</body>
+</html>
