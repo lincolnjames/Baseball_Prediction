@@ -2,17 +2,24 @@
 시뮬레이션 모델 백테스트: 선수 기록 스냅샷 이후 실제 경기 결과를 얼마나 맞히는지 측정한다.
 
 사용법: py backtest.py [--sims 500] [--report REPORT.md]
+       [--data-dir 폴더] [--games 경기결과.csv] [--snapshot-date YYYY-MM-DD]
 
-- 선수 기록 CSV(static/*.csv)는 2025-05-20 경기까지 반영된 스냅샷이다
-  (선발 39명의 등판 수가 이 날짜까지의 선발 등판 수와 모두 일치).
+기본값은 2025시즌 한 시점(5월 20일)을 본다. 다른 시즌·다른 시점을 보려면 세 옵션을 함께 바꾼다:
+--data-dir 는 그 시점까지 반영된 선수 기록 스냅샷 폴더(hitters.csv, pitchers.csv 등),
+--games 는 실제 경기 결과 CSV, --snapshot-date 는 그 스냅샷이 반영된 마지막 날짜다.
+예: 2026시즌이 끝난 뒤 --data-dir import/2026/out --games data/kbo_2026_games.csv
+    --snapshot-date 2026-06-30 로 시즌 중 한 시점을 평가할 수 있다.
+
+- 선수 기록 스냅샷은 snapshot-date 까지 반영된 것이어야 한다 (기본값 2025-05-20 스냅샷은
+  선발 39명의 등판 수가 이 날짜까지의 선발 등판 수와 모두 일치하는 것으로 확인했다).
   미래 정보가 섞이지 않도록 그 다음 날부터의 경기만 평가한다.
 - 선발투수는 실제 경기 선발을 쓰고, 타순·불펜은 팀별 기본값(타석 수 상위 9명, 등판 많은 불펜)을 쓴다.
   실제 경기 타순은 데이터에 없다.
 - 무승부 경기는 평가에서 제외하고, 예측값은 "무승부가 아닐 때 홈팀이 이길 확률"로 본다.
 
-경기 결과 데이터(data/kbo_2025_games.csv)는 저장소에 포함하지 않는다.
+경기 결과 데이터(기본값 data/kbo_2025_games.csv)는 저장소에 포함하지 않는다.
 KBO 사이트는 사전 승인 없는 자동 수집·복제를 금지하므로, 승인받은 경로로 확보한 파일을
-data/ 에 두고 실행한다. 형식은 GAMES_COLUMNS 참고 (status 가 final 인 경기만 사용).
+따로 두고 --games 로 가리킨다. 형식은 GAMES_COLUMNS 참고 (status 가 final 인 경기만 사용).
 """
 import argparse
 import csv
@@ -88,10 +95,10 @@ def default_rosters(static_dir=STATIC_DIR):
 
 # ---------- 예측 ----------
 
-def simulation_predictions(games, sims, seed=2025):
+def simulation_predictions(games, sims, seed=2025, data_dir=STATIC_DIR):
     """경기마다 sims 번 시뮬레이션 → 무승부 제외 홈 승리 확률, 예상 총득점"""
-    model = sim.Model()
-    rosters = default_rosters()
+    model = sim.Model(data_dir)
+    rosters = default_rosters(data_dir)
     predictions = []
     for index, game in enumerate(games):
         plans = {}
@@ -190,15 +197,15 @@ def calibration(probabilities, outcomes, bins=CALIBRATION_BINS):
 
 # ---------- 실행 ----------
 
-def run_backtest(sims):
-    games = load_games()
-    train, test = split_games(games)
+def run_backtest(sims, data_dir=STATIC_DIR, games_csv=GAMES_CSV, snapshot_date=SNAPSHOT_DATE):
+    games = load_games(games_csv)
+    train, test = split_games(games, snapshot_date)
     test = [g for g in test if g["home_score"] != g["away_score"]]
     outcomes = [int(g["home_score"] > g["away_score"]) for g in test]
     home_edge = home_win_rate(train) - 0.5
 
     start = time.time()
-    sim_preds, warnings = simulation_predictions(test, sims)
+    sim_preds, warnings = simulation_predictions(test, sims, data_dir=data_dir)
     elapsed = time.time() - start
 
     sim_p = [p["p_home"] for p in sim_preds]
@@ -211,6 +218,7 @@ def run_backtest(sims):
     }
     return {
         "train_games": len(train),
+        "train_period": f"{train[0]['date']} ~ {snapshot_date}" if train else snapshot_date,
         "test_games": len(test),
         "test_period": f"{test[0]['date']} ~ {test[-1]['date']}",
         "home_edge": home_edge,
@@ -231,7 +239,7 @@ def format_report(result):
     lines = [
         "# 백테스트 결과",
         "",
-        f"- 학습 구간: 2025-03-22 ~ {SNAPSHOT_DATE} ({result['train_games']}경기, 선수 기록 스냅샷 기준)",
+        f"- 학습 구간: {result['train_period']} ({result['train_games']}경기, 선수 기록 스냅샷 기준)",
         f"- 평가 구간: {result['test_period']} ({result['test_games']}경기, 무승부 제외)",
         f"- 경기당 시뮬레이션: {result['sims']}회 (소요 {result['elapsed']:.0f}초)",
         f"- 학습 구간 홈 승률: {0.5 + result['home_edge']:.3f}",
@@ -274,10 +282,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--sims", type=int, default=500, help="경기당 시뮬레이션 횟수")
     parser.add_argument("--report", help="마크다운 보고서 저장 경로")
+    parser.add_argument("--data-dir", default=STATIC_DIR,
+                        help="선수 기록 스냅샷 폴더 (hitters.csv 등, 기본: 2025 기본 데이터)")
+    parser.add_argument("--games", default=GAMES_CSV, help="경기 결과 CSV 경로 (기본: 2025시즌)")
+    parser.add_argument("--snapshot-date", default=SNAPSHOT_DATE,
+                        help="이 날짜까지 학습, 다음날부터 평가 (YYYY-MM-DD, 기본: 2025-05-20)")
     args = parser.parse_args()
 
     sys.stdout.reconfigure(encoding="utf-8")
-    report = format_report(run_backtest(args.sims))
+    report = format_report(run_backtest(args.sims, args.data_dir, args.games, args.snapshot_date))
     print(report)
     if args.report:
         with open(args.report, "w", encoding="utf-8", newline="\n") as f:
