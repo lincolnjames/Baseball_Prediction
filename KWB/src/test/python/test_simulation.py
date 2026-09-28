@@ -14,8 +14,9 @@ sys.path.insert(0, os.path.abspath(STATIC_DIR))
 import simulation as sim  # noqa: E402
 
 
-def player(key, outcome="k", starter_innings=9):
-    return SimpleNamespace(key=key, outcome=outcome, starter_innings=starter_innings)
+def player(key, outcome="k", starter_innings=9, steal_attempt=0.0, steal_success=0.0):
+    return SimpleNamespace(key=key, outcome=outcome, starter_innings=starter_innings,
+                           steal_attempt=steal_attempt, steal_success=steal_success)
 
 
 class ScriptedModel:
@@ -112,18 +113,18 @@ class BaseRunningTest(unittest.TestCase):
         used = []
         original = sim.play_half_inning
 
-        def recording(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=None):
-            used.append((offense.lineup[0].key[0], reach_on_error))
+        def recording(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=None, steal_odds=None):
+            used.append((offense.lineup[0].key[0], reach_on_error, steal_odds))
             return 0
 
         sim.play_half_inning = recording
         try:
-            home = sim.TeamPlan("h", [player("h1")], player("h-sp"), [], reach_on_error=0.01)
-            away = sim.TeamPlan("a", [player("a1")], player("a-sp"), [], reach_on_error=0.05)
+            home = sim.TeamPlan("h", [player("h1")], player("h-sp"), [], reach_on_error=0.01, steal_odds=0.8)
+            away = sim.TeamPlan("a", [player("a1")], player("a-sp"), [], reach_on_error=0.05, steal_odds=1.3)
             sim.simulate_game(ScriptedModel(), home, away, random.Random(0))
         finally:
             sim.play_half_inning = original
-        self.assertEqual(set(used), {("a", 0.01), ("h", 0.05)})  # 원정 공격 = 홈 수비
+        self.assertEqual(set(used), {("a", 0.01, 0.8), ("h", 0.05, 1.3)})  # 원정 공격 = 홈 수비
 
 
 class ModelTest(unittest.TestCase):
@@ -198,6 +199,45 @@ class ModelTest(unittest.TestCase):
             rows = [r for r in csv.DictReader(f) if r["IP"] and r["ERA"]]
         ip = [sim.innings(float(r["IP"])) for r in rows]
         return sum(float(r["ERA"]) * i for r, i in zip(rows, ip)) / sum(ip)
+
+
+class StealTest(unittest.TestCase):
+
+    def test_runner_who_reaches_first_steals_second(self):
+        runner = player("r", "single", steal_attempt=1.0, steal_success=1.0)
+        model = ScriptedModel()
+        offense = sim.Offense([runner] + [player(f"k{i}") for i in range(8)])
+        sim.play_half_inning(model, offense, player("p"), random.Random(0))
+        # 단타 → 도루 성공 → 삼진 3개로 이닝 종료 (도루 실패였다면 삼진 2개로 끝남)
+        self.assertEqual(len(model.plate_appearances), 4)
+
+    def test_caught_stealing_adds_an_out(self):
+        runner = player("r", "bb", steal_attempt=1.0, steal_success=0.0)
+        bases, outs = sim.attempt_steal(runner, [runner, False, True], 1, random.Random(0))
+        self.assertEqual((bases, outs), ([False, False, True], 2))
+
+    def test_no_attempt_when_second_base_is_occupied(self):
+        runner = player("r", "single", steal_attempt=1.0, steal_success=0.0)
+        model = ScriptedModel()
+        # 두 번째 타자 단타 때는 2루가 비지만, 첫 타자가 이미 실패했다면 아웃이 늘어난다
+        offense = sim.Offense([runner] * 9)
+        sim.play_half_inning(model, offense, player("p"), random.Random(0))
+        self.assertEqual(len(model.plate_appearances), 3)  # 단타 후 매번 도루 실패 → 3타석에 3아웃
+
+    def test_defense_odds_change_success_rate(self):
+        runner = player("r", steal_attempt=1.0, steal_success=0.75)
+        rng = random.Random(1)
+        strong = sum(sim.attempt_steal(runner, [runner, False, False], 0, rng, 0.5)[1] == 0 for _ in range(4000))
+        weak = sum(sim.attempt_steal(runner, [runner, False, False], 0, rng, 2.0)[1] == 0 for _ in range(4000))
+        self.assertAlmostEqual(strong / 4000, 0.6, delta=0.03)   # odds 3 × 0.5 = 1.5 → 0.6
+        self.assertAlmostEqual(weak / 4000, 6 / 7, delta=0.03)   # odds 3 × 2 = 6 → 0.857
+
+    def test_team_steal_factors_are_regressed_odds_ratios(self):
+        factors = sim._team_steal_factors([{"Team": "A", "SB": "60", "CS": "40"},
+                                           {"Team": "B", "SB": "90", "CS": "10"}])
+        self.assertLess(factors["A"], 1)
+        self.assertGreater(factors["B"], 1)
+        self.assertGreater(factors["A"], sim._odds(0.6) / sim._odds(0.75))  # 회귀로 관측값보다 1 에 가깝다
 
 
 class TeamFieldingTest(unittest.TestCase):
