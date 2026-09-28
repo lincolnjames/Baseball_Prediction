@@ -1,6 +1,7 @@
 package com.application.KWB.match;
 
 import java.util.List;
+import java.util.Map;
 
 import org.apache.ibatis.annotations.Mapper;
 
@@ -15,5 +16,11 @@ public interface MatchDAO {
 	List<HitterDTO> getHitterByTeam(String teamName);
 
 	List<PitcherDTO> getPitcherByTeam(String teamName);
+
+	List<Map<String, Object>> getLineupCandidates(String teamName);
+
+	List<Map<String, Object>> getPitchingStaff(String teamName);
+
+	List<Map<String, Object>> getPositions(String teamName);
 
 }

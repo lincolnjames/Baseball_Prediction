@@ -98,6 +98,9 @@
 <body th:data-home-team="${homeTeam}" th:data-away-team="${awayTeam}">
 
 <h1 th:text="${awayTeam} + ' (원정) vs ' + ${homeTeam} + ' (홈)'">경기 선수 선택</h1>
+<p style="text-align:center">
+  <a th:href="@{/match/predict(hometeam=${homeTeam},awayteam=${awayTeam})}">라인업 시나리오 분석 · 확정 예측 화면으로 →</a>
+</p>
 
 <div class="team-container">
   <!-- 홈팀 -->

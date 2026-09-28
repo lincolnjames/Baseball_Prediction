@@ -32,6 +32,8 @@ TABLES = {
                      "RISP", "PH-BA"]),
     19: ("pitcher1", ["rank", "name", "team", "ERA", "G", "W", "L", "SV", "HLD", "WPCT", "IP", "H", "HR", "BB",
                       "HBP", "SO", "R", "ER", "WHIP"]),
+    17: ("defense", ["rank", "name", "team", "POS", "G", "GS", "IP", "E", "PKO", "PO", "A", "DP", "FPCT", "PB",
+                     "SB", "CS", "CS%"]),
     18: ("pitcher2", ["rank", "name", "team", "ERA", "CG", "SHO", "QS", "BSV", "TBF", "NP", "AVG", "2B", "3B",
                       "SAC", "SF", "IBB", "WP", "BK"]),
 }
@@ -43,6 +45,8 @@ HITTER_COLUMNS = ["Year", "Team", "Player", "G", "PA", "AB", "H", "2B", "3B", "H
                   "AVG", "OBP", "SLG", "K%", "BB%"]
 PITCHER_COLUMNS = ["Year", "Team", "Player", "G", "W", "L", "SV", "HLD", "IP", "TBF", "H", "HR", "BB", "HBP", "SO",
                    "ER", "ERA", "WHIP", "K%", "BB%", "HR/9"]
+POSITION_COLUMNS = ["Year", "Team", "Player", "POS", "G", "GS", "INN"]
+FIELD_POSITIONS = {"포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수"}
 SCHEDULE_COLUMNS = ["date", "stadium", "away_team", "home_team"]  # 앱 일정 (취소 경기 제외)
 GAMES_COLUMNS = ["date", "time", "stadium", "away", "home", "away_score", "home_score", "status"]
 
@@ -94,7 +98,8 @@ def read_tables(folder):
                 if row["team"] not in TEAMS:
                     errors.append(f"{where} 알 수 없는 팀명 '{row['team']}'")
                     continue
-                key = (row["team"], row["rank"], row["name"])
+                # 수비 기록은 한 선수가 포지션마다 한 줄씩(같은 순위일 수도 있음) 나오므로 포지션까지 키에 넣는다
+                key = (row["team"], row["rank"], row["name"]) + ((row["POS"],) if kind == "defense" else ())
                 if key in tables[kind] and tables[kind][key] != row:
                     errors.append(f"{where} 같은 선수({key})가 다른 값으로 두 번 들어있음")
                 tables[kind][key] = row
@@ -193,6 +198,40 @@ def build(folder, year):
 
     renamed = disambiguate(hitters) + disambiguate(pitchers)
     return hitters, pitchers, problems, renamed
+
+
+def build_positions(folder, year, hitters):
+    """수비 기록 → 야수 포지션별 출장 (Team, Player, POS, G, GS, INN), 문제 목록, 참고 메시지.
+
+    투수 포지션은 빼고, 타석이 있는 선수(hitters)에만 붙인다. 같은 팀 동명이인 타자는 수비 기록으로
+    구분할 수 없으므로 타석이 많은 쪽에 붙이고 참고 메시지를 남긴다.
+    """
+    tables, _ = read_tables(folder)  # 읽기 오류는 build() 에서 이미 보고한다
+    variants = defaultdict(list)  # (팀, 원래 이름) → 타자 이름(동명이인이면 '이름(N경기)'), 타석 많은 순
+    for h in sorted(hitters, key=lambda h: -int(h["PA"])):
+        variants[(h["Team"], h["Player"].split("(")[0])].append(h["Player"])
+
+    positions, problems, notes = [], [], []
+    for key, row in tables["defense"].items():
+        if row["POS"] == "투수":
+            continue
+        if row["POS"] not in FIELD_POSITIONS:
+            problems.append(f"수비 {key}: 알 수 없는 포지션 '{row['POS']}'")
+            continue
+        po, a, e = int(row["PO"]), int(row["A"]), int(row["E"])
+        if po + a + e > 0:
+            p = check("수비", key, "수비율", num(row["FPCT"]), (po + a) / (po + a + e), RATE_TOLERANCE)
+            if p:
+                problems.append(p)
+        names = variants.get((row["team"], row["name"]))
+        if not names:
+            continue  # 타석이 없는 대수비·대주자
+        if len(names) > 1:
+            notes.append(f"{row['team']} {row['name']} {row['POS']} 수비 기록을 {names[0]}에 연결 (동명이인)")
+        outs = innings_outs(row["IP"])
+        positions.append({"Year": year, "Team": row["team"], "Player": names[0], "POS": row["POS"],
+                          "G": row["G"], "GS": row["GS"], "INN": f"{outs // 3}.{outs % 3}"})
+    return positions, problems, notes
 
 
 def parse_schedule_text(text, year):
@@ -329,6 +368,16 @@ def main():
     for message in renamed:
         print(f"  동명이인 구분: {message}")
 
+    positions, position_problems, position_notes = build_positions(args.folder, args.year, hitters)
+    problems += position_problems
+    if positions:
+        teams_with_positions = sorted({p["Team"] for p in positions})
+        missing = sorted({h["Team"] for h in hitters} - set(teams_with_positions))
+        print(f"\n수비 포지션 {len(positions)}건 (팀 {len(teams_with_positions)}개"
+              f"{', 없는 팀: ' + ', '.join(missing) if missing else ''})")
+        for message in position_notes:
+            print(f"  참고: {message}")
+
     games, schedule_problems, notes = build_schedule(args.folder, args.year)
     has_schedule = bool(games or schedule_problems)
     if has_schedule:
@@ -350,6 +399,9 @@ def main():
     os.makedirs(out, exist_ok=True)
     write_csv(os.path.join(out, "hitters.csv"), HITTER_COLUMNS, hitters)
     write_csv(os.path.join(out, "pitchers.csv"), PITCHER_COLUMNS, pitchers)
+    if positions:
+        write_csv(os.path.join(out, "positions.csv"), POSITION_COLUMNS, positions,
+                  lambda p: (p["Team"], p["Player"], -int(p["GS"])))
     if has_schedule:
         by_time = lambda g: (g["date"], g["time"])  # noqa: E731
         playable = [g | {"away_team": g["away"], "home_team": g["home"]}

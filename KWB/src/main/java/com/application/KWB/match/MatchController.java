@@ -1,6 +1,7 @@
 package com.application.KWB.match;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -49,6 +50,21 @@ public class MatchController{
 		    return "match/detail";  // detail.html 뷰로 전달
 		}
 	
+	/** 승부 예측: 선발·라인업을 입력해 시나리오 분석(발표 전)과 확정 예측(발표 후)을 한다 */
+	@GetMapping("/predict")
+	public String predict(
+			@RequestParam("hometeam") String homeTeam,
+			@RequestParam("awayteam") String awayTeam,
+			Model model) {
+		Map<String, Object> data = new LinkedHashMap<>();
+		data.put("home", matchService.getPredictionRoster(homeTeam));
+		data.put("away", matchService.getPredictionRoster(awayTeam));
+		model.addAttribute("homeTeam", homeTeam);
+		model.addAttribute("awayTeam", awayTeam);
+		model.addAttribute("predictData", data);
+		return "match/predict";
+	}
+
 	@GetMapping("/month")
 	@ResponseBody
     public List<GameDateDto> getMatchesByMonth(@RequestParam("month") int month) {
