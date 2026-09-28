@@ -57,6 +57,38 @@ public class CsvDataLoader implements ApplicationRunner {
 			int count = load(table[0], csv);
 			log.info("{} 테이블에 {}건 적재 ({})", table[0], count, csv.getDescription());
 		}
+		Resource games = resolve("games.csv");
+		if (games.exists()) {
+			log.info("game_results 에 종료 경기 {}건 반영 ({})", importResults(games), games.getDescription());
+		}
+	}
+
+	/**
+	 * 가져온 일정의 종료 경기 점수를 game_results 에 넣는다. game_results 는 재시작해도 지우지 않는 테이블이라
+	 * 같은 경기가 이미 있으면 공식 기록으로 덮어쓴다 (직접 입력한 결과보다 우선).
+	 */
+	private int importResults(Resource csv) throws IOException {
+		List<Object[]> rows = new ArrayList<>();
+		try (BufferedReader reader = new BufferedReader(
+				new InputStreamReader(csv.getInputStream(), StandardCharsets.UTF_8))) {
+			List<String> header = Arrays.asList(stripBom(reader.readLine()).split(",", -1));
+			String line;
+			while ((line = reader.readLine()) != null) {
+				String[] v = line.split(",", -1);
+				if (v.length != header.size() || !"final".equals(v[header.indexOf("status")])) {
+					continue;
+				}
+				rows.add(new Object[] { v[header.indexOf("date")], v[header.indexOf("home")], v[header.indexOf("away")],
+					Integer.parseInt(v[header.indexOf("home_score")]), Integer.parseInt(v[header.indexOf("away_score")]) });
+			}
+		}
+		jdbcTemplate.batchUpdate("""
+			INSERT INTO game_results (game_date, home_team, away_team, home_score, away_score, source, updated_at)
+			VALUES (?, ?, ?, ?, ?, 'import', NOW())
+			ON DUPLICATE KEY UPDATE home_score = VALUES(home_score), away_score = VALUES(away_score),
+			                        source = 'import', updated_at = NOW()
+			""", rows);
+		return rows.size();
 	}
 
 	private Resource resolve(String fileName) {

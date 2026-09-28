@@ -45,9 +45,11 @@
 </head>
 <body th:data-home-team="${homeTeam}" th:data-away-team="${awayTeam}">
 
-<a href="/">← 경기 목록</a>
+<a href="/">← 경기 목록</a> · <a href="/predictions">예측 성적</a>
 <h1 th:text="${awayTeam} + ' (원정) vs ' + ${homeTeam} + ' (홈)'">승부 예측</h1>
-<p class="lead">예고 선발과 예상 라인업으로 <b>시나리오 분석</b>을 하고, 라인업이 발표되면 실제 라인업으로 <b>확정 예측</b>을 하세요.</p>
+<p class="lead">예고 선발과 예상 라인업으로 <b>시나리오 분석</b>을 하고, 라인업이 발표되면 실제 라인업으로 <b>확정 예측</b>을 하세요.
+  결과 아래 버튼으로 예측을 기록하면 경기 후 <a href="/predictions">예측 성적</a>에서 채점됩니다.</p>
+<p class="lead">경기일 <input type="date" id="gameDate" th:value="${gameDate}" /></p>
 
 <div class="teams">
   <section class="team" id="team-away"></section>
@@ -212,11 +214,53 @@ async function run(mode, button) {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || '서버 오류');
-    result.innerHTML = mode === 'analyze' ? renderAnalysis(data) : renderPrediction(data);
+    lastRun = { mode, body, data };
+    result.innerHTML = (mode === 'analyze' ? renderAnalysis(data) : renderPrediction(data)) + recordCard(mode);
+    document.getElementById('recordBtn').addEventListener('click', recordPrediction);
   } catch (e) {
     result.innerHTML = `<div class="card error">오류: ${escapeHtml(e.message)}</div>`;
   } finally {
     document.querySelectorAll('.actions button').forEach(b => b.disabled = false);
+  }
+}
+
+// ---------- 예측 기록 ----------
+let lastRun = null;
+
+function recordCard(mode) {
+  const what = mode === 'analyze' ? '라인업 발표 전 예측 (승률 기댓값)' : '라인업 발표 후 확정 예측';
+  return `<div class="card">
+    <button class="primary" id="recordBtn" type="button">이 예측 기록하기</button>
+    <span class="muted"> ${what}으로 기록합니다. 기록은 고칠 수 없고, 경기 시작 전 가장 늦은 기록이 채점됩니다.</span>
+    <div id="recordStatus"></div></div>`;
+}
+
+async function recordPrediction() {
+  const status = document.getElementById('recordStatus');
+  const gameDate = document.getElementById('gameDate').value;
+  if (!lastRun || !gameDate) { status.innerHTML = '<p class="error">경기일을 입력해 주세요.</p>'; return; }
+  const { mode, body, data } = lastRun;
+  const payload = {
+    stage: mode, gameDate, homeTeam: body.homeTeam, awayTeam: body.awayTeam,
+    homeWinProb: mode === 'analyze' ? data.expected_home : data.home,
+    baseHomeProb: mode === 'analyze' ? data.base.home : null,
+    rangeLow: mode === 'analyze' ? data.range_home[0] : null,
+    rangeHigh: mode === 'analyze' ? data.range_home[1] : null,
+    drawProb: mode === 'analyze' ? data.base.draw : data.draw,
+    games: mode === 'analyze' ? data.games.base : data.games,
+    homeStarter: body.home.starter, awayStarter: body.away.starter,
+    homeLineup: body.home.lineup, awayLineup: body.away.lineup,
+  };
+  document.getElementById('recordBtn').disabled = true;
+  try {
+    const response = await fetch('/predictions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    const saved = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(saved.message || '서버 오류');
+    status.innerHTML = `<p>기록했습니다 (${escapeHtml(saved.createdAt.replace('T', ' '))}). <a href="/predictions">예측 성적 보기</a></p>`;
+  } catch (e) {
+    document.getElementById('recordBtn').disabled = false;
+    status.innerHTML = `<p class="error">기록 실패: ${escapeHtml(e.message)}</p>`;
   }
 }
 

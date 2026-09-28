@@ -1,11 +1,14 @@
 package com.application.KWB.match;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -55,7 +58,10 @@ public class MatchController{
 	public String predict(
 			@RequestParam("hometeam") String homeTeam,
 			@RequestParam("awayteam") String awayTeam,
+			@RequestParam(value = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
 			Model model) {
+		LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+		model.addAttribute("gameDate", date != null ? date : matchService.getNextGameDate(homeTeam, awayTeam, today));
 		Map<String, Object> data = new LinkedHashMap<>();
 		data.put("home", matchService.getPredictionRoster(homeTeam));
 		data.put("away", matchService.getPredictionRoster(awayTeam));
