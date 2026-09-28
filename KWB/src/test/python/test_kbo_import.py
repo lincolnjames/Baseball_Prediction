@@ -80,7 +80,7 @@ class VerificationTest(unittest.TestCase):
         first = hitters[0]
         self.assertEqual((first["K%"], first["BB%"]), ("17.5", "10.0"))
         mid = next(p for p in pitchers if p["Player"] == "마투수")
-        self.assertEqual((mid["IP"], mid["TBF"], mid["HR/9"]), ("40.1", 175, "0.89"))
+        self.assertEqual((mid["IP"], mid["TBF"], mid["HR/9"], mid["WP"]), ("40.1", 175, "0.89", "1"))
 
     def test_typo_in_a_stat_is_caught(self):
         wrong = list(HITTER2)
@@ -190,8 +190,8 @@ class PositionsTest(unittest.TestCase):
     def test_team_fielding_counts_every_position_including_pitchers(self):
         fielding = ki.build_fielding(complete_folder(**{"defense.txt": DEFENSE}), 2026)
         # 실책 5+2+0+1+0, 수비 아웃 (700 + 400 1/3 + 20 + 120 + 1) × 3 = 3724 → 9개 포지션으로 나눠 414 아웃
-        # 허용 도루·도루저지는 포수 줄(나타자)에서만 나온다
-        self.assertEqual(fielding, [{"Year": 2026, "Team": "KT", "E": 8, "INN": "138.0", "SB": 30, "CS": 10}])
+        # 허용 도루·도루저지·포일은 포수 줄(나타자)에서만 나온다
+        self.assertEqual(fielding, [{"Year": 2026, "Team": "KT", "E": 8, "INN": "138.0", "SB": 30, "CS": 10, "PB": 3}])
 
 
 RUNNING = [
@@ -255,6 +255,8 @@ class SimulationWithRawCountsTest(unittest.TestCase):
         self.assertEqual(model.warnings, [])
         pitcher = model.pitcher("KT", "라투수")
         self.assertAlmostEqual(pitcher.starter_innings, 120 / 20)
+        self.assertGreater(pitcher.wp_factor, 0)  # WP 열이 pitchers.csv 로 흘러들어와 폭투 기능이 켜짐
+        self.assertGreater(model.wp_pb_rate, 0)
 
 
 if __name__ == "__main__":

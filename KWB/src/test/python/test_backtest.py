@@ -2,6 +2,7 @@
 import csv
 import os
 import sys
+import tempfile
 import unittest
 
 KWB_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -98,6 +99,28 @@ class RealDataTest(unittest.TestCase):
         for (date, away, home), stadium in swapped:
             self.assertIn("NC", (away, home))
             self.assertNotEqual(official[(date, home, away)], stadium, date)
+
+
+class CliParamsTest(unittest.TestCase):
+    """다른 시즌·시점을 백테스트하려면 --data-dir·--games·--snapshot-date 로 바꿔 낄 수 있어야 한다."""
+
+    def test_run_backtest_accepts_custom_data_dir_games_and_snapshot_date(self):
+        games_path = os.path.join(tempfile.mkdtemp(), "games.csv")
+        with open(games_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=bt.GAMES_COLUMNS)
+            writer.writeheader()
+            writer.writerow({"date": "2025-04-01", "game_id": "1", "stadium": "잠실", "away": "KT", "home": "LG",
+                             "away_score": "2", "home_score": "3", "away_starter": "고영표", "home_starter": "임찬규",
+                             "status": "final"})
+            writer.writerow({"date": "2025-04-02", "game_id": "2", "stadium": "잠실", "away": "KT", "home": "LG",
+                             "away_score": "1", "home_score": "5", "away_starter": "고영표", "home_starter": "임찬규",
+                             "status": "final"})
+
+        result = bt.run_backtest(2, data_dir=bt.STATIC_DIR, games_csv=games_path, snapshot_date="2025-04-01")
+
+        self.assertEqual(result["train_games"], 1)
+        self.assertEqual(result["train_period"], "2025-04-01 ~ 2025-04-01")
+        self.assertEqual(result["test_games"], 1)
 
 
 if __name__ == "__main__":

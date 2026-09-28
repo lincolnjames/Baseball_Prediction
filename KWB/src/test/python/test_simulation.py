@@ -14,16 +14,18 @@ sys.path.insert(0, os.path.abspath(STATIC_DIR))
 import simulation as sim  # noqa: E402
 
 
-def player(key, outcome="k", starter_innings=9, steal_attempt=0.0, steal_success=0.0):
+def player(key, outcome="k", starter_innings=9, steal_attempt=0.0, steal_success=0.0, wp_factor=1.0):
     return SimpleNamespace(key=key, outcome=outcome, starter_innings=starter_innings,
-                           steal_attempt=steal_attempt, steal_success=steal_success)
+                           steal_attempt=steal_attempt, steal_success=steal_success, wp_factor=wp_factor)
 
 
 class ScriptedModel:
     """타자마다 정해진 결과만 내는 모델. 타석 순서를 기록한다."""
 
-    def __init__(self):
+    def __init__(self, wp_pb_rate=0.0, wp_share=0.5):
         self.plate_appearances = []
+        self.wp_pb_rate = wp_pb_rate
+        self.wp_share = wp_share
 
     def outcome_table(self, batter, pitcher, park_factor=1.0):
         self.plate_appearances.append(batter.key)
@@ -114,20 +116,21 @@ class BaseRunningTest(unittest.TestCase):
         original = sim.play_half_inning
 
         def recording(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=None, steal_odds=None,
-                     park_factor=None):
-            used.append((offense.lineup[0].key[0], reach_on_error, steal_odds, park_factor))
+                     pb_factor=None, park_factor=None):
+            used.append((offense.lineup[0].key[0], reach_on_error, steal_odds, pb_factor, park_factor))
             return 0
 
         sim.play_half_inning = recording
         try:
             home = sim.TeamPlan("h", [player("h1")], player("h-sp"), [], reach_on_error=0.01, steal_odds=0.8,
-                                park_factor=1.1)
+                                pb_factor=1.2, park_factor=1.1)
             away = sim.TeamPlan("a", [player("a1")], player("a-sp"), [], reach_on_error=0.05, steal_odds=1.3,
-                                park_factor=0.9)  # 원정팀 구장 요인은 안 쓰인다 (항상 홈팀 구장)
+                                pb_factor=0.7, park_factor=0.9)  # 원정팀 구장 요인은 안 쓰인다 (항상 홈팀 구장)
             sim.simulate_game(ScriptedModel(), home, away, random.Random(0))
         finally:
             sim.play_half_inning = original
-        self.assertEqual(set(used), {("a", 0.01, 0.8, 1.1), ("h", 0.05, 1.3, 1.1)})  # 원정 공격 = 홈 수비, 둘 다 홈팀 구장
+        # 원정 공격 = 홈 수비, 구장 요인은 둘 다 홈팀(h) 것
+        self.assertEqual(set(used), {("a", 0.01, 0.8, 1.2, 1.1), ("h", 0.05, 1.3, 0.7, 1.1)})
 
 
 class ModelTest(unittest.TestCase):
@@ -247,7 +250,7 @@ class TeamFieldingTest(unittest.TestCase):
 
     def test_error_factors_are_regressed_and_average_to_league(self):
         rows = [{"Team": "A", "E": "120", "INN": "1200.0"}, {"Team": "B", "E": "80", "INN": "1200.0"}]
-        factors = sim._team_error_factors(rows)
+        factors = sim._team_rate_factors(rows, "E", sim.ERROR_REG_INN)
 
         self.assertGreater(factors["A"], 1)
         self.assertLess(factors["A"], 1.2)  # 관측 배수 1.2 보다 리그 평균 쪽으로
@@ -270,6 +273,53 @@ class TeamFieldingTest(unittest.TestCase):
         model = sim.Model()
         self.assertEqual(model.reach_on_error("LG"), sim.P_REACH_ON_ERROR)
         self.assertEqual(model.warnings, [])
+
+
+class WildPitchTest(unittest.TestCase):
+
+    def test_wild_pitch_advance_moves_every_runner_and_scores_third(self):
+        self.assertEqual(sim.wild_pitch_advance([True, True, True]), (1, [False, True, True]))
+        self.assertEqual(sim.wild_pitch_advance([True, False, False]), (0, [False, True, False]))
+        self.assertEqual(sim.wild_pitch_advance([False, False, False]), (0, [False, False, False]))
+
+    def test_play_half_inning_rolls_wp_pb_only_when_runners_on_base(self):
+        # 리그 확률 100% 로 두면 주자가 있을 때마다 무조건 발동해, 투수가 아웃을 하나도 못 잡으면
+        # (첫 타자 볼넷 이후 나머지는 삼진) 폭투·포일로만 득점이 나야 한다
+        model = ScriptedModel(wp_pb_rate=1.0)
+        offense = sim.Offense([player("1", "bb")] + [player(f"k{i}", "k") for i in range(8)])
+        runs = sim.play_half_inning(model, offense, player("p"), random.Random(0))
+        self.assertGreater(runs, 0)
+
+    def test_play_half_inning_never_rolls_when_league_rate_is_zero(self):
+        model = ScriptedModel(wp_pb_rate=0.0)
+        offense = sim.Offense([player("1", "bb")] + [player(f"k{i}", "k") for i in range(8)])
+        runs = sim.play_half_inning(model, offense, player("p"), random.Random(0))
+        self.assertEqual(runs, 0)  # 볼넷 한 번으로는 득점 없음 (0아웃 1루) → 폭투·포일 없이는 무득점
+
+    def test_wp_factor_defaults_to_one_without_wp_column(self):
+        model = sim.Model()  # 2025 기본 데이터에는 WP 열이 없음 → 폭투 기능 꺼짐
+        self.assertEqual(model.pitcher("KT", "고영표").wp_factor, 1.0)
+        self.assertEqual(model.wp_pb_rate, 0.0)
+
+    def test_league_pitcher_computes_wp_rate_when_wp_column_present(self):
+        rows = [{"IP": "100.0", "TBF": "400", "SO": "80", "BB": "30", "HBP": "5", "H": "90", "HR": "8",
+                "WHIP": "1.20", "WP": "6"},
+                {"IP": "100.0", "TBF": "400", "SO": "80", "BB": "30", "HBP": "5", "H": "90", "HR": "8",
+                "WHIP": "1.20", "WP": "2"}]
+        league = sim._league_pitcher(rows)
+        self.assertAlmostEqual(league["wp_rate"], 8 / 800)
+
+    def test_wp_pb_baseline_is_zero_without_wp_or_pb_data(self):
+        league_pitcher = {"wp": 0.0, "bf": 1000.0}
+        rate, share = sim._wp_pb_baseline(league_pitcher, [])
+        self.assertEqual(rate, 0.0)
+
+    def test_wp_pb_baseline_combines_pitcher_and_team_totals(self):
+        league_pitcher = {"wp": 40.0, "bf": 20000.0}
+        fielding = [{"Team": "A", "PB": "10"}, {"Team": "B", "PB": "10"}]
+        rate, share = sim._wp_pb_baseline(league_pitcher, fielding)
+        self.assertAlmostEqual(rate, (40 + 20) / 20000 * sim.WP_PB_SCALE)
+        self.assertAlmostEqual(share, 40 / 60)
 
 
 class ParkFactorTest(unittest.TestCase):
