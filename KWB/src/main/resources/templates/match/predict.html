@@ -186,6 +186,15 @@ const POSITION_ABBREVIATIONS = {
   '좌': '좌익수', '중': '중견수', '우': '우익수', '포': '포수', '지': '지명타자',
   '一': '1루수', '二': '2루수', '三': '3루수', '유': '유격수',
 };
+// 대타·대주자로 들어와 자리를 지킨 선수는 "타三"(대타 후 3루), "주우"(대주자 후 우익수)처럼
+// 역할과 포지션이 붙은 두 글자로 나온다. 정확히 일치하는 게 없으면 마지막 글자로도 찾아본다
+// (타석 결과 코드는 "안"·"홈"·"병"처럼 포지션 약자와 겹치지 않는 글자로 끝나 안전하다).
+function resolvePosition(token, posSet) {
+  const direct = POSITION_ABBREVIATIONS[token] || token;
+  if (posSet.has(direct)) return direct;
+  const last = POSITION_ABBREVIATIONS[token.slice(-1)];
+  return last && posSet.has(last) ? last : null;
+}
 function parseQuickFill(side, text) {
   const roster = DATA[side];
   const hitterNames = new Set(roster.hitters.map(h => h.player));
@@ -198,7 +207,7 @@ function parseQuickFill(side, text) {
     const tokens = raw.trim().split(/\s+/).filter(Boolean);
     if (!tokens.length) continue;
     const orderTok = tokens.find(t => /^[1-9]$/.test(t));
-    const posTok = tokens.map(t => POSITION_ABBREVIATIONS[t] || t).find(t => posSet.has(t));
+    const posTok = tokens.map(t => resolvePosition(t, posSet)).find(Boolean);
     const nameTok = tokens.find(t => hitterNames.has(t));
     if (orderTok && posTok && nameTok && !seenOrders.has(orderTok)) {
       seenOrders.add(orderTok);
