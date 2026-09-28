@@ -186,28 +186,31 @@ const POSITION_ABBREVIATIONS = {
   '좌': '좌익수', '중': '중견수', '우': '우익수', '포': '포수', '지': '지명타자',
   '一': '1루수', '二': '2루수', '三': '3루수', '유': '유격수',
 };
-// 대타·대주자로 들어와 자리를 지킨 선수는 "타三"(대타 후 3루), "주우"(대주자 후 우익수)처럼
-// 역할과 포지션이 붙은 두 글자로 나온다. 정확히 일치하는 게 없으면 마지막 글자로도 찾아본다
-// (타석 결과 코드는 "안"·"홈"·"병"처럼 포지션 약자와 겹치지 않는 글자로 끝나 안전하다).
-function resolvePosition(token, posSet) {
+// 포지션에 이동 이력이 붙어 "二ー"(2루수로 시작해 나중에 다른 자리로), "三二"(3루수로 시작해
+// 2루수로)처럼 두 글자로 나올 때가 있다 — 우리가 채우려는 건 "경기를 시작한 포지션"이므로 첫 글자를
+// 쓴다. 대타·대주자로 들어온 선수는 "타三"(대타 후 3루)처럼 나오는데, 첫 글자("타")는 수비 포지션이
+// 아니라서 안 걸린다 — 그 타순의 진짜 선발은 더 앞줄에서 이미 찾았을 것이다.
+function resolvePosition(token) {
   const direct = POSITION_ABBREVIATIONS[token] || token;
-  if (posSet.has(direct)) return direct;
-  const last = POSITION_ABBREVIATIONS[token.slice(-1)];
-  return last && posSet.has(last) ? last : null;
+  if (POSITIONS.includes(direct)) return direct;
+  const first = POSITION_ABBREVIATIONS[token.charAt(0)];
+  return first && POSITIONS.includes(first) ? first : null;
 }
 function parseQuickFill(side, text) {
   const roster = DATA[side];
   const hitterNames = new Set(roster.hitters.map(h => h.player));
   const pitcherNames = new Set(roster.pitchers.map(p => p.player));
-  const posSet = new Set(POSITIONS);
   const seenOrders = new Set();
   const picks = [];
   let starter = null;
   for (const raw of text.split(/\r?\n/)) {
     const tokens = raw.trim().split(/\s+/).filter(Boolean);
     if (!tokens.length) continue;
-    const orderTok = tokens.find(t => /^[1-9]$/.test(t));
-    const posTok = tokens.map(t => resolvePosition(t, posSet)).find(Boolean);
+    // 포지션은 항상 타순 번호 바로 다음 칸에 나온다 — 뒤쪽 타석 결과 칸("좌안" 등)과 헷갈리지 않도록
+    // 그 칸만 본다.
+    const orderIdx = tokens.findIndex(t => /^[1-9]$/.test(t));
+    const orderTok = orderIdx >= 0 ? tokens[orderIdx] : null;
+    const posTok = orderIdx >= 0 ? resolvePosition(tokens[orderIdx + 1] || '') : null;
     const nameTok = tokens.find(t => hitterNames.has(t));
     if (orderTok && posTok && nameTok && !seenOrders.has(orderTok)) {
       seenOrders.add(orderTok);
