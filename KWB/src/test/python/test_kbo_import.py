@@ -190,7 +190,49 @@ class PositionsTest(unittest.TestCase):
     def test_team_fielding_counts_every_position_including_pitchers(self):
         fielding = ki.build_fielding(complete_folder(**{"defense.txt": DEFENSE}), 2026)
         # 실책 5+2+0+1+0, 수비 아웃 (700 + 400 1/3 + 20 + 120 + 1) × 3 = 3724 → 9개 포지션으로 나눠 414 아웃
-        self.assertEqual(fielding, [{"Year": 2026, "Team": "KT", "E": 8, "INN": "138.0"}])
+        # 허용 도루·도루저지는 포수 줄(나타자)에서만 나온다
+        self.assertEqual(fielding, [{"Year": 2026, "Team": "KT", "E": 8, "INN": "138.0", "SB": 30, "CS": 10}])
+
+
+RUNNING = [
+    "1\t가타자\tKT\t100\t20\t15\t5\t75.0\t2\t0",
+    "2\t나타자\tKT\t80\t0\t0\t0\t-\t1\t0",
+    "3\t대주자\tKT\t30\t5\t4\t1\t80.0\t0\t0",   # 타석이 없는 대주자는 제외
+]
+
+
+class RunningTest(unittest.TestCase):
+
+    def test_running_rows_attach_to_hitters(self):
+        folder = complete_folder(**{"running.txt": RUNNING})
+        hitters, _, problems, _ = ki.build(folder, 2026)
+        running, running_problems = ki.build_running(folder, 2026, hitters)
+
+        self.assertEqual(problems + running_problems, [])
+        self.assertEqual(sorted((r["Player"], r["SBA"], r["SB"], r["CS"]) for r in running),
+                         [("가타자", 20, 15, 5), ("나타자", 0, 0, 0)])
+
+    def test_inconsistent_attempts_are_caught(self):
+        wrong = [RUNNING[0].replace("\t20\t15\t5\t", "\t21\t15\t5\t")]
+        folder = complete_folder(**{"running.txt": wrong})
+        hitters, _, _, _ = ki.build(folder, 2026)
+        _, problems = ki.build_running(folder, 2026, hitters)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("도루시도", problems[0])
+
+    def test_simulation_uses_running_csv(self):
+        folder = complete_folder(**{"running.txt": RUNNING, "defense.txt": DEFENSE})
+        hitters, pitchers, _, _ = ki.build(folder, 2026)
+        running, _ = ki.build_running(folder, 2026, hitters)
+        out = tempfile.mkdtemp()
+        ki.write_csv(os.path.join(out, "hitters.csv"), ki.HITTER_COLUMNS, hitters)
+        ki.write_csv(os.path.join(out, "pitchers.csv"), ki.PITCHER_COLUMNS, pitchers)
+        ki.write_csv(os.path.join(out, "running.csv"), ki.RUNNING_COLUMNS, running)
+
+        model = sim.Model(out)
+        runner, slow = model.batter("KT", "가타자"), model.batter("KT", "나타자")
+        self.assertGreater(runner.steal_attempt, slow.steal_attempt)
+        self.assertGreater(slow.steal_attempt, 0)  # 시도 0 회도 리그 평균 쪽으로 회귀
 
 
 class SimulationWithRawCountsTest(unittest.TestCase):

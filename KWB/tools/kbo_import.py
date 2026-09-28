@@ -10,6 +10,8 @@ KBO 기록실에서 사람이 직접 복사한 표(탭 구분 텍스트)를 검�
   타자 기본기록 2 (15열): 순위 선수명 팀명 AVG BB IBB HBP SO GDP SLG OBP OPS MH RISP PH-BA
   투수 기본기록 1 (19열): 순위 선수명 팀명 ERA G W L SV HLD WPCT IP H HR BB HBP SO R ER WHIP
   투수 기본기록 2 (18열): 순위 선수명 팀명 ERA CG SHO QS BSV TBF NP AVG 2B 3B SAC SF IBB WP BK
+  수비 기록      (17열): 순위 선수명 팀명 POS G GS IP E PKO PO A DP FPCT PB SB CS CS%
+  주루 기록      (10열): 순위 선수명 팀명 G SBA SB CS SB% OOB PKO
 
 검산: 타율·출루율·장타율, 피안타율·평균자책·WHIP 를 원시 기록으로 다시 계산해 표 값과 비교한다.
 1·2번 표는 (팀, 순위, 이름)으로 짝짓고, 한쪽에만 있는 선수는 페이지 누락으로 보고한다.
@@ -36,6 +38,7 @@ TABLES = {
                      "SB", "CS", "CS%"]),
     18: ("pitcher2", ["rank", "name", "team", "ERA", "CG", "SHO", "QS", "BSV", "TBF", "NP", "AVG", "2B", "3B",
                       "SAC", "SF", "IBB", "WP", "BK"]),
+    10: ("running", ["rank", "name", "team", "G", "SBA", "SB", "CS", "SB%", "OOB", "PKO"]),
 }
 TEAMS = {"KIA", "KT", "LG", "NC", "SSG", "두산", "롯데", "삼성", "키움", "한화"}
 RATE_TOLERANCE = 0.0006    # 소수 셋째 자리 반올림 오차
@@ -46,7 +49,8 @@ HITTER_COLUMNS = ["Year", "Team", "Player", "G", "PA", "AB", "H", "2B", "3B", "H
 PITCHER_COLUMNS = ["Year", "Team", "Player", "G", "W", "L", "SV", "HLD", "IP", "TBF", "H", "HR", "BB", "HBP", "SO",
                    "ER", "ERA", "WHIP", "K%", "BB%", "HR/9"]
 POSITION_COLUMNS = ["Year", "Team", "Player", "POS", "G", "GS", "INN"]
-FIELDING_COLUMNS = ["Year", "Team", "E", "INN"]  # 팀 수비: 실책 합계, 수비 이닝
+FIELDING_COLUMNS = ["Year", "Team", "E", "INN", "SB", "CS"]  # 팀 수비: 실책, 수비 이닝, 허용 도루, 도루저지
+RUNNING_COLUMNS = ["Year", "Team", "Player", "SBA", "SB", "CS"]
 FIELD_POSITIONS = {"포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수"}
 SCHEDULE_COLUMNS = ["date", "start_time", "stadium", "away_team", "home_team"]  # 앱 일정 (취소 경기 제외)
 GAMES_COLUMNS = ["date", "time", "stadium", "away", "home", "away_score", "home_score", "status"]
@@ -242,16 +246,49 @@ def build_fielding(folder, year):
     붙어 나오므로, 실책과 이닝을 같은 표에서 세야 팀 실책률이 한쪽으로 치우치지 않는다.
     """
     tables, _ = read_tables(folder)
-    errors, outs = defaultdict(int), defaultdict(int)
+    totals = defaultdict(lambda: {"E": 0, "outs": 0, "SB": 0, "CS": 0})
     for row in tables["defense"].values():
-        errors[row["team"]] += int(row["E"])
-        outs[row["team"]] += innings_outs(row["IP"])
+        team = totals[row["team"]]
+        team["E"] += int(row["E"])
+        team["outs"] += innings_outs(row["IP"])
+        team["SB"] += int(row["SB"])  # 허용 도루·도루저지는 포수 줄에만 있다
+        team["CS"] += int(row["CS"])
     fielding = []
-    for team in sorted(errors):
-        team_outs = round(outs[team] / 9)
+    for name, team in sorted(totals.items()):
+        team_outs = round(team["outs"] / 9)
         if team_outs > 0:
-            fielding.append({"Year": year, "Team": team, "E": errors[team], "INN": f"{team_outs // 3}.{team_outs % 3}"})
+            fielding.append({"Year": year, "Team": name, "E": team["E"], "INN": f"{team_outs // 3}.{team_outs % 3}",
+                             "SB": team["SB"], "CS": team["CS"]})
     return fielding
+
+
+def build_running(folder, year, hitters):
+    """주루 기록 → 타자별 (Team, Player, SBA, SB, CS), 문제 목록.
+
+    같은 팀 동명이인은 경기 수로 '이름(N경기)' 타자에 붙이고, 못 찾으면 타석이 많은 쪽에 붙인다.
+    """
+    tables, _ = read_tables(folder)
+    variants = defaultdict(list)
+    for h in sorted(hitters, key=lambda h: -int(h["PA"])):
+        variants[(h["Team"], h["Player"].split("(")[0])].append(h["Player"])
+
+    running, problems = [], []
+    for key, row in tables["running"].items():
+        sba, sb, cs = int(row["SBA"]), int(row["SB"]), int(row["CS"])
+        if sba != sb + cs:
+            problems.append(f"주루 {key}: 도루시도 {sba} ≠ 도루 {sb} + 도루실패 {cs}")
+            continue
+        if sba > 0:
+            p = check("주루", key, "도루성공률", num(row["SB%"]), sb / sba * 100, 0.06)
+            if p:
+                problems.append(p)
+        names = variants.get((row["team"], row["name"]))
+        if not names:
+            continue  # 타석이 없는 대주자·투수
+        by_games = f"{row['name']}({row['G']}경기)"
+        player = by_games if by_games in names else names[0]
+        running.append({"Year": year, "Team": row["team"], "Player": player, "SBA": sba, "SB": sb, "CS": cs})
+    return running, problems
 
 
 def parse_schedule_text(text, year):
@@ -400,6 +437,13 @@ def main():
     fielding = build_fielding(args.folder, args.year)
     if fielding:
         print("팀 실책: " + ", ".join(f"{f['Team']} {f['E']}개/{f['INN']}이닝" for f in fielding))
+    running, running_problems = build_running(args.folder, args.year, hitters)
+    problems += running_problems
+    if running:
+        attempts = defaultdict(int)
+        for r in running:
+            attempts[r["Team"]] += r["SBA"]
+        print(f"주루 {len(running)}명: " + ", ".join(f"{t} 도루시도 {n}" for t, n in sorted(attempts.items())))
 
     games, schedule_problems, notes = build_schedule(args.folder, args.year)
     has_schedule = bool(games or schedule_problems)
@@ -427,6 +471,8 @@ def main():
                   lambda p: (p["Team"], p["Player"], -int(p["GS"])))
     if fielding:
         write_csv(os.path.join(out, "fielding.csv"), FIELDING_COLUMNS, fielding, lambda f: f["Team"])
+    if running:
+        write_csv(os.path.join(out, "running.csv"), RUNNING_COLUMNS, running)
     if has_schedule:
         by_time = lambda g: (g["date"], g["time"])  # noqa: E731
         playable = [g | {"away_team": g["away"], "home_team": g["home"], "start_time": g["time"]}
