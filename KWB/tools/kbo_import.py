@@ -47,9 +47,9 @@ ERA_TOLERANCE = 0.006      # 소수 둘째 자리 반올림 오차
 HITTER_COLUMNS = ["Year", "Team", "Player", "G", "PA", "AB", "H", "2B", "3B", "HR", "BB", "HBP", "SO", "SF",
                   "AVG", "OBP", "SLG", "K%", "BB%"]
 PITCHER_COLUMNS = ["Year", "Team", "Player", "G", "W", "L", "SV", "HLD", "IP", "TBF", "H", "HR", "BB", "HBP", "SO",
-                   "ER", "ERA", "WHIP", "K%", "BB%", "HR/9"]
+                   "ER", "ERA", "WHIP", "K%", "BB%", "HR/9", "WP"]
 POSITION_COLUMNS = ["Year", "Team", "Player", "POS", "G", "GS", "INN"]
-FIELDING_COLUMNS = ["Year", "Team", "E", "INN", "SB", "CS"]  # 팀 수비: 실책, 수비 이닝, 허용 도루, 도루저지
+FIELDING_COLUMNS = ["Year", "Team", "E", "INN", "SB", "CS", "PB"]  # 팀 수비: 실책, 수비 이닝, 허용 도루, 도루저지, 포일
 RUNNING_COLUMNS = ["Year", "Team", "Player", "SBA", "SB", "CS"]
 FIELD_POSITIONS = {"포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수"}
 SCHEDULE_COLUMNS = ["date", "start_time", "stadium", "away_team", "home_team"]  # 앱 일정 (취소 경기 제외)
@@ -198,7 +198,7 @@ def build(folder, year):
             "IP": f"{outs // 3}.{outs % 3}", "TBF": tbf, "H": p1["H"], "HR": p1["HR"], "BB": p1["BB"],
             "HBP": p1["HBP"], "SO": p1["SO"], "ER": p1["ER"], "ERA": p1["ERA"], "WHIP": p1["WHIP"],
             "K%": f"{int(p1['SO']) / tbf * 100:.1f}", "BB%": f"{int(p1['BB']) / tbf * 100:.1f}",
-            "HR/9": f"{int(p1['HR']) * 27 / outs:.2f}",
+            "HR/9": f"{int(p1['HR']) * 27 / outs:.2f}", "WP": p2["WP"],
         })
 
     renamed = disambiguate(hitters) + disambiguate(pitchers)
@@ -246,19 +246,20 @@ def build_fielding(folder, year):
     붙어 나오므로, 실책과 이닝을 같은 표에서 세야 팀 실책률이 한쪽으로 치우치지 않는다.
     """
     tables, _ = read_tables(folder)
-    totals = defaultdict(lambda: {"E": 0, "outs": 0, "SB": 0, "CS": 0})
+    totals = defaultdict(lambda: {"E": 0, "outs": 0, "SB": 0, "CS": 0, "PB": 0})
     for row in tables["defense"].values():
         team = totals[row["team"]]
         team["E"] += int(row["E"])
         team["outs"] += innings_outs(row["IP"])
-        team["SB"] += int(row["SB"])  # 허용 도루·도루저지는 포수 줄에만 있다
+        team["SB"] += int(row["SB"])  # 허용 도루·도루저지·포일은 포수 줄에만 있다
         team["CS"] += int(row["CS"])
+        team["PB"] += int(row["PB"])
     fielding = []
     for name, team in sorted(totals.items()):
         team_outs = round(team["outs"] / 9)
         if team_outs > 0:
             fielding.append({"Year": year, "Team": name, "E": team["E"], "INN": f"{team_outs // 3}.{team_outs % 3}",
-                             "SB": team["SB"], "CS": team["CS"]})
+                             "SB": team["SB"], "CS": team["CS"], "PB": team["PB"]})
     return fielding
 
 

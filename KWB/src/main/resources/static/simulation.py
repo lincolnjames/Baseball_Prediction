@@ -18,6 +18,9 @@ KBO 경기 몬테카를로 시뮬레이션.
 6. 인플레이 아웃의 실책 출루 확률은 수비 팀의 이닝당 실책을 리그 평균 쪽으로 회귀시켜 반영한다.
 7. 주루 기록이 있으면 1루에 나간 주자가 선수별 시도율로 2루 도루를 시도하고,
    성공률은 주자 성공률과 수비 팀(포수)의 도루 허용률을 odds ratio 로 결합한다.
+8. 폭투·포일도 실책처럼 "그때 주자가 몇 베이스 갔는지"는 기록에 없으므로, 투수의 폭투 비율과
+   수비 팀(포수)의 포일 비율을 리그 평균 쪽으로 회귀시켜 타석마다 모든 주자가 한 베이스씩
+   진루할 확률로 근사한다.
 """
 import csv
 import json
@@ -70,6 +73,17 @@ STEAL_DEFENSE_REG = 100    # 팀 도루 허용률 회귀 (상대 시도 횟수)
 # 1루 출루당 시도율 → 시뮬레이션 시도 확률 배수. 2루가 차 있는 출루는 기회가 아니고 3루 도루도 2루 도루로
 # 합쳐 세므로, 2026 팀 기본 라인업 시뮬레이션의 경기당 시도(0.85)가 실제(0.846)와 같아지도록 맞췄다.
 STEAL_ATTEMPT_SCALE = 1.5
+
+# 폭투·포일 (pitchers.csv 의 WP, fielding.csv 의 PB 가 있을 때만): 주자가 있는 타석마다 이 확률로
+# 모든 주자가 한 베이스씩 진루한다 (3루 주자는 득점). 실제로는 주자가 있을 때만 세는 기록이지만,
+# 시뮬레이션에서는 "주자 유무와 상관없이 굴려서 주자가 있을 때만 효과를 낸다" 쪽이 다루기 쉬우므로,
+# 리그 전체 타석 기준 비율에 WP_PB_SCALE 을 곱해 실제 경기당 발생 횟수에 맞춘다.
+WP_REG_BF = 600            # 투수 폭투율 회귀 (상대 타자 수): 폭투는 드문 사건이라 크게 회귀
+PB_REG_INN = 6000          # 팀 포일률 회귀 (이닝): 포일은 실책보다도 훨씬 적어 더 크게 회귀
+# 리그 평균 비율 → 시뮬레이션 확률 배수. 폭투·포일은 주자가 없을 때도(기록되지 않을 뿐) 일어날 수 있어
+# WP/BF 를 그대로 쓰면 적게 나오므로, 2026 팀 기본 라인업 시뮬레이션의 경기당 발생(0.98)이
+# 실제(0.97, calibrate_wp_pb.py)와 같아지도록 올렸다.
+WP_PB_SCALE = 2.3
 
 MAX_INNINGS = 11           # KBO 2025 정규시즌: 연장 11회까지, 동점이면 무승부
 MAX_CLOSER_LEAD = 3        # 9회 이후 이 점수 차 이내 리드(또는 동점)면 마무리 등판
@@ -128,6 +142,7 @@ class Pitcher:
     hr_per_hit: float
     starter_innings: float
     ptype: str = None        # R / L / U(언더)
+    wp_factor: float = 1.0   # 리그 평균 대비 폭투 비율 배수
 
 
 @dataclass
@@ -139,6 +154,7 @@ class TeamPlan:
     closer: Pitcher = None
     reach_on_error: float = P_REACH_ON_ERROR  # 이 팀이 수비할 때 인플레이 아웃이 실책 출루가 될 확률
     steal_odds: float = 1.0  # 이 팀이 수비할 때 상대 도루 성공 odds 배수 (리그 평균 1, 포수 어깨가 좋으면 < 1)
+    pb_factor: float = 1.0   # 이 팀이 수비할 때 리그 평균 대비 포일 비율 배수
 
 
 class Model:
@@ -164,8 +180,11 @@ class Model:
             for r in pitchers for split, diff in _pitcher_split_diffs(r).items())
         # 팀 수비 기록(fielding.csv)은 선택: 없으면 모든 팀이 리그 평균 실책률
         fielding = _read_csv(data_dir, "fielding.csv") if os.path.exists(os.path.join(data_dir, "fielding.csv")) else []
-        self.error_factors = _team_error_factors(fielding)
+        self.error_factors = _team_rate_factors(fielding, "E", ERROR_REG_INN)
         self.steal_factors = _team_steal_factors(fielding)
+        self.pb_factors = _team_rate_factors(fielding, "PB", PB_REG_INN)
+        # 폭투·포일 리그 기준 확률: pitchers.csv 에 WP, fielding.csv 에 PB 가 있을 때만 (없으면 0)
+        self.wp_pb_rate, self.wp_share = _wp_pb_baseline(self.league_pitcher, fielding)
         # 주루 기록(running.csv)도 선택: 없으면 도루 없이 계산
         running = _read_csv(data_dir, "running.csv") if os.path.exists(os.path.join(data_dir, "running.csv")) else []
         self._running = {(r["Team"], r["Player"]): r for r in running}
@@ -211,6 +230,9 @@ class Model:
     def steal_odds(self, team):
         return self.steal_factors.get(team, 1.0)
 
+    def pb_factor(self, team):
+        return self.pb_factors.get(team, 1.0)
+
     def pitcher(self, team, name):
         row = self._find(self._pitchers, team, name, "투수")
         ptype = _lookup_type(self._ptypes, team, name)
@@ -229,7 +251,16 @@ class Model:
         hr_per_hit = _regress(obs["hr"] / max(obs["h"], 0.02), bf, lp["hr_per_hit"], HR_REG_BF)
         g = _num(row, "G") or 0
         starter_innings = obs["ip"] / g if g > 0 else DEFAULT_STARTER_INNINGS
-        return Pitcher((team, name), rates, splits, hr_per_hit, starter_innings, ptype)
+        wp_factor = self._wp_factor(row, bf)
+        return Pitcher((team, name), rates, splits, hr_per_hit, starter_innings, ptype, wp_factor)
+
+    def _wp_factor(self, row, bf):
+        """리그 평균 대비 이 투수의 폭투 비율 배수. WP 기록이 없으면(2025 기본 데이터 등) 1.0."""
+        league_wp = self.league_pitcher.get("wp_rate", 0.0)
+        wp = _num(row, "WP")
+        if not league_wp or wp is None:
+            return 1.0
+        return _regress(wp / max(bf, 1), bf, league_wp, WP_REG_BF) / league_wp
 
     def reach_on_error(self, team):
         if not self.error_factors:
@@ -319,6 +350,7 @@ class Model:
             closer=self.pitcher(team, spec["closer"]) if spec.get("closer") else None,
             reach_on_error=self.reach_on_error(team),
             steal_odds=self.steal_odds(team),
+            pb_factor=self.pb_factor(team),
         )
 
 
@@ -460,17 +492,18 @@ def _pitcher_observed(row, default_whip):
             "ip": ip}
 
 
-def _team_error_factors(rows):
-    """팀 수비 기록(Team, E, INN) → 팀 → 리그 평균 대비 실책률 배수 (표본 회귀 후)"""
-    teams = {r["Team"]: ((_num(r, "E") or 0), innings(_num(r, "INN") or 0)) for r in rows}
+def _team_rate_factors(rows, count_col, reg):
+    """팀 수비 기록(Team, count_col, INN) → 팀 → 리그 평균 대비 배수 (표본 회귀 후).
+    실책률·포일률처럼 "이닝당 개수"로 재는 팀 수비 지표에 공통으로 쓴다."""
+    teams = {r["Team"]: ((_num(r, count_col) or 0), innings(_num(r, "INN") or 0)) for r in rows}
     total_inn = sum(inn for _, inn in teams.values())
     if total_inn <= 0:
         return {}
-    league = sum(e for e, _ in teams.values()) / total_inn
+    league = sum(c for c, _ in teams.values()) / total_inn
     if league <= 0:
         return {}
-    return {team: _regress(e / inn if inn else league, inn, league, ERROR_REG_INN) / league
-            for team, (e, inn) in teams.items()}
+    return {team: _regress(c / inn if inn else league, inn, league, reg) / league
+            for team, (c, inn) in teams.items()}
 
 
 def _team_steal_factors(rows):
@@ -537,11 +570,30 @@ def _league_pitcher(rows):
         for e in ("k", "bb", "h", "hr"):
             total[e] += obs[e] * obs["bf"]
         total["bf"] += obs["bf"]
+        wp = _num(r, "WP")
+        if wp is not None:
+            total["wp"] += wp
+            total["wp_bf"] += obs["bf"]
     league = {e: total[e] / total["bf"] for e in ("k", "bb", "h")}
     league["out"] = 1 - league["k"] - league["bb"] - league["h"]
     league["hr_per_hit"] = total["hr"] / total["h"]
     league["whip"] = league_whip
+    league["bf"] = total["bf"]
+    league["wp"] = total["wp"]
+    # WP 열이 없는 데이터(예: 2025 기본 데이터)는 wp_bf 가 0 → wp_rate 0 (폭투 기능 꺼짐)
+    league["wp_rate"] = total["wp"] / total["wp_bf"] if total["wp_bf"] else 0.0
     return league
+
+
+def _wp_pb_baseline(league_pitcher, fielding):
+    """(리그 기준 폭투·포일 확률, 그중 폭투 비중). WP·PB 기록이 없으면 (0, 0.5) — 기능이 꺼진다."""
+    total_wp = league_pitcher.get("wp", 0.0)
+    total_bf = league_pitcher.get("bf", 0.0)
+    total_pb = sum(_num(r, "PB") or 0 for r in fielding)
+    if not total_bf or (total_wp + total_pb) <= 0:
+        return 0.0, 0.5
+    rate = (total_wp + total_pb) / total_bf * WP_PB_SCALE
+    return rate, total_wp / (total_wp + total_pb)
 
 
 # ---------- 경기 진행 ----------
@@ -584,13 +636,21 @@ class Staff:
 
 
 def play_half_inning(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=P_REACH_ON_ERROR,
-                     steal_odds=1.0):
+                     steal_odds=1.0, pb_factor=1.0):
     """반 이닝 득점. runs_to_win 이 있으면 끝내기 점수에 도달하는 즉시 종료한다.
-    reach_on_error, steal_odds 는 수비 팀의 실책 출루 확률과 상대 도루 성공 odds 배수."""
+    reach_on_error, steal_odds, pb_factor 는 수비 팀의 실책 출루 확률·상대 도루 성공 odds 배수·포일 비율 배수."""
     runs, outs = 0, 0
     bases = [False, False, False]
     while outs < 3:
         batter = offense.next_batter()
+        if any(bases) and model.wp_pb_rate:
+            p = model.wp_pb_rate * (model.wp_share * pitcher.wp_factor + (1 - model.wp_share) * pb_factor)
+            if rng.random() < p:
+                wp_runs, bases = wild_pitch_advance(bases)
+                runs += wp_runs
+                if runs_to_win is not None and runs >= runs_to_win:
+                    break
+
         table = model.outcome_table(batter, pitcher)
         r = rng.random()
         outcome = next((o for cum, o in table if r < cum), table[-1][1])
@@ -601,6 +661,12 @@ def play_half_inning(model, offense, pitcher, rng, runs_to_win=None, reach_on_er
         if outs < 3 and bases[0] is batter and not bases[1]:
             bases, outs = attempt_steal(batter, bases, outs, rng, steal_odds)
     return runs
+
+
+def wild_pitch_advance(bases):
+    """폭투·포일: 주자 전원 한 베이스씩 진루 (3루 주자는 득점). (득점, 새 주자 상태)"""
+    first, second, third = bases
+    return int(bool(third)), [False, bool(first), bool(second)]
 
 
 def attempt_steal(runner, bases, outs, rng, steal_odds=1.0):
@@ -685,7 +751,8 @@ def simulate_game(model, home, away, rng):
 
     for inning in range(1, MAX_INNINGS + 1):
         pitcher = home_staff.pitcher_for(inning, home_score - away_score)
-        away_score += play_half_inning(model, away_bats, pitcher, rng, None, home.reach_on_error, home.steal_odds)
+        away_score += play_half_inning(model, away_bats, pitcher, rng, None, home.reach_on_error, home.steal_odds,
+                                       home.pb_factor)
 
         if inning >= 9 and home_score > away_score:
             break  # 9회말 이후 홈팀이 이기고 있으면 말 공격 없음
@@ -693,7 +760,7 @@ def simulate_game(model, home, away, rng):
         pitcher = away_staff.pitcher_for(inning, away_score - home_score)
         runs_to_win = away_score - home_score + 1 if inning >= 9 else None
         home_score += play_half_inning(model, home_bats, pitcher, rng, runs_to_win, away.reach_on_error,
-                                       away.steal_odds)
+                                       away.steal_odds, away.pb_factor)
 
         if inning >= 9 and home_score != away_score:
             break
