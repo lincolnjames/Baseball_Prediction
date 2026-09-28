@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.application.KWB.prediction.PredictionDAO">
+
+    <insert id="insert" parameterType="map">
+        INSERT INTO predictions (created_at, game_date, home_team, away_team, stage, home_win_prob,
+                                 base_home_prob, range_low, range_high, draw_prob, games,
+                                 home_starter, away_starter, home_lineup, away_lineup)
+        VALUES (#{createdAt}, #{gameDate}, #{homeTeam}, #{awayTeam}, #{stage}, #{homeWinProb},
+                #{baseHomeProb}, #{rangeLow}, #{rangeHigh}, #{drawProb}, #{games},
+                #{homeStarter}, #{awayStarter}, #{homeLineup}, #{awayLineup})
+    </insert>
+
+    <!-- 같은 날 같은 대진이 일정에 여러 번 있으면(더블헤더) 가장 이른 시작 시각을 쓴다 -->
+    <select id="findAllWithResults" resultType="com.application.KWB.prediction.PredictionRow">
+        SELECT p.id, p.created_at, p.game_date, p.home_team, p.away_team, p.stage, p.home_win_prob,
+               p.base_home_prob, p.range_low, p.range_high, p.home_starter, p.away_starter,
+               (SELECT MIN(s.start_time) FROM schedule s
+                 WHERE s.date = p.game_date AND s.home_team = p.home_team AND s.away_team = p.away_team) AS start_time,
+               r.home_score, r.away_score, r.source AS result_source
+        FROM predictions p
+        LEFT JOIN game_results r
+               ON r.game_date = p.game_date AND r.home_team = p.home_team AND r.away_team = p.away_team
+        ORDER BY p.game_date DESC, p.created_at DESC
+    </select>
+
+    <insert id="upsertManualResult">
+        INSERT INTO game_results (game_date, home_team, away_team, home_score, away_score, source, updated_at)
+        VALUES (#{gameDate}, #{homeTeam}, #{awayTeam}, #{homeScore}, #{awayScore}, 'manual', #{updatedAt})
+        ON DUPLICATE KEY UPDATE
+            home_score = IF(source = 'import', home_score, VALUES(home_score)),
+            away_score = IF(source = 'import', away_score, VALUES(away_score)),
+            updated_at = IF(source = 'import', updated_at, VALUES(updated_at))
+    </insert>
+
+</mapper>

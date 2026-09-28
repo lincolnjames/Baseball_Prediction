@@ -162,6 +162,7 @@
   </style>
 </head>
 <body>
+  <p style="text-align:right"><a href="/predictions">예측 성적 →</a></p>
 
   <!-- 월 선택 -->
   <div class="month-nav">
@@ -310,7 +311,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	            html += `<a href="${detailUrl}"><div class="team-block">${game.awayteam}</div></a>`;
 	            html += `<div class="vs">vs</div>`;
 	            html += `<a href="${detailUrl}"><div class="team-block">${game.hometeam} (홈)</div></a>`;
-	            html += `<a class="prediction" href="/match/predict?${query}">예측</a>`;
+	            html += `<a class="prediction" href="/match/predict?${query}&date=${gameDate.date}">예측</a>`;
 	            html += `</div>`;
 	          });
 

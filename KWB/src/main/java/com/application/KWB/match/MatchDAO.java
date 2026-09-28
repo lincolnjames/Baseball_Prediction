@@ -1,9 +1,11 @@
 package com.application.KWB.match;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import com.application.KWB.team.HitterDTO;
 import com.application.KWB.team.PitcherDTO;
@@ -16,6 +18,9 @@ public interface MatchDAO {
 	List<HitterDTO> getHitterByTeam(String teamName);
 
 	List<PitcherDTO> getPitcherByTeam(String teamName);
+
+	String getNextGameDate(@Param("homeTeam") String homeTeam, @Param("awayTeam") String awayTeam,
+		@Param("from") LocalDate from);
 
 	List<Map<String, Object>> getLineupCandidates(String teamName);
 
