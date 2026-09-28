@@ -42,6 +42,14 @@ class ExternalDataDirTests {
 	}
 
 	@Test
+	void loadsWildPitchColumnAddedByRawCountData() {
+		// schema.sql 에 없는 CSV 컬럼이 있으면 CsvDataLoader 가 시작할 때 바로 실패한다 (컨텍스트 로딩 자체가 이 사실을 확인한다).
+		// 값도 같이 확인해 컬럼명이 우연히 일치한 게 아님을 보장한다.
+		assertThat(jdbcTemplate.queryForObject("SELECT wp FROM pitchers WHERE player = '라투수'", Integer.class))
+			.isEqualTo(3);
+	}
+
+	@Test
 	void screensShowExternalPlayers() {
 		List<HitterDTO> hitters = teamDAO.findHitterListByTeam("KT");
 		List<PitcherDTO> pitchers = teamDAO.findPitcherListByTeam("KT");
