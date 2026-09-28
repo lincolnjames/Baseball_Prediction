@@ -46,6 +46,7 @@ HITTER_COLUMNS = ["Year", "Team", "Player", "G", "PA", "AB", "H", "2B", "3B", "H
 PITCHER_COLUMNS = ["Year", "Team", "Player", "G", "W", "L", "SV", "HLD", "IP", "TBF", "H", "HR", "BB", "HBP", "SO",
                    "ER", "ERA", "WHIP", "K%", "BB%", "HR/9"]
 POSITION_COLUMNS = ["Year", "Team", "Player", "POS", "G", "GS", "INN"]
+FIELDING_COLUMNS = ["Year", "Team", "E", "INN"]  # 팀 수비: 실책 합계, 수비 이닝
 FIELD_POSITIONS = {"포수", "1루수", "2루수", "3루수", "유격수", "좌익수", "중견수", "우익수"}
 SCHEDULE_COLUMNS = ["date", "start_time", "stadium", "away_team", "home_team"]  # 앱 일정 (취소 경기 제외)
 GAMES_COLUMNS = ["date", "time", "stadium", "away", "home", "away_score", "home_score", "status"]
@@ -234,6 +235,25 @@ def build_positions(folder, year, hitters):
     return positions, problems, notes
 
 
+def build_fielding(folder, year):
+    """수비 기록 → 팀별 (Team, E, INN). 투수를 포함한 모든 포지션의 실책을 더한다.
+
+    수비 이닝은 포지션별 이닝 합계 / 9 로 구한다. 시즌 중 이적한 선수의 기록은 시즌 전체가 지금 팀에
+    붙어 나오므로, 실책과 이닝을 같은 표에서 세야 팀 실책률이 한쪽으로 치우치지 않는다.
+    """
+    tables, _ = read_tables(folder)
+    errors, outs = defaultdict(int), defaultdict(int)
+    for row in tables["defense"].values():
+        errors[row["team"]] += int(row["E"])
+        outs[row["team"]] += innings_outs(row["IP"])
+    fielding = []
+    for team in sorted(errors):
+        team_outs = round(outs[team] / 9)
+        if team_outs > 0:
+            fielding.append({"Year": year, "Team": team, "E": errors[team], "INN": f"{team_outs // 3}.{team_outs % 3}"})
+    return fielding
+
+
 def parse_schedule_text(text, year):
     """일정 페이지 텍스트 → (경기 목록, 문제 목록)"""
     tokens = [t.strip() for t in re.split(r"[\t\r\n]+", text) if t.strip()]
@@ -377,6 +397,9 @@ def main():
               f"{', 없는 팀: ' + ', '.join(missing) if missing else ''})")
         for message in position_notes:
             print(f"  참고: {message}")
+    fielding = build_fielding(args.folder, args.year)
+    if fielding:
+        print("팀 실책: " + ", ".join(f"{f['Team']} {f['E']}개/{f['INN']}이닝" for f in fielding))
 
     games, schedule_problems, notes = build_schedule(args.folder, args.year)
     has_schedule = bool(games or schedule_problems)
@@ -402,6 +425,8 @@ def main():
     if positions:
         write_csv(os.path.join(out, "positions.csv"), POSITION_COLUMNS, positions,
                   lambda p: (p["Team"], p["Player"], -int(p["GS"])))
+    if fielding:
+        write_csv(os.path.join(out, "fielding.csv"), FIELDING_COLUMNS, fielding, lambda f: f["Team"])
     if has_schedule:
         by_time = lambda g: (g["date"], g["time"])  # noqa: E731
         playable = [g | {"away_team": g["away"], "home_team": g["home"], "start_time": g["time"]}

@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,8 +27,12 @@ class PredictionServiceTests {
 	private final PredictionService service = new PredictionService(dao, clock);
 
 	private static PredictionRequest request(String stage, String home, String away, Double prob) {
+		// Map.of 는 키 순서가 실행마다 달라 JSON 문자열 비교가 흔들린다. 요청 JSON 처럼 순서를 지키는 맵을 쓴다
+		Map<String, String> batter = new LinkedHashMap<>();
+		batter.put("name", "박찬호");
+		batter.put("pos", "유격수");
 		return new PredictionRequest(stage, LocalDate.of(2026, 9, 29), home, away, prob, null, null, null, 0.03,
-			10000, "곽빈", "구창모", List.of(Map.of("name", "박찬호", "pos", "유격수")), null);
+			10000, "곽빈", "구창모", List.of(batter), null);
 	}
 
 	@Test

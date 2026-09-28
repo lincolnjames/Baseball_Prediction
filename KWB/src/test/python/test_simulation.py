@@ -1,7 +1,9 @@
 """simulation.py 테스트. 실행: py -m unittest discover -s KWB/src/test/python"""
 import os
 import random
+import shutil
 import sys
+import tempfile
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
@@ -100,6 +102,29 @@ class BaseRunningTest(unittest.TestCase):
     def test_strikeout_adds_out_without_moving_runners(self):
         self.assertEqual(self.advance("k", [True, False, True], 1), (0, [True, False, True], 2))
 
+    def test_reach_on_error_rate_decides_whether_in_play_out_becomes_error(self):
+        always = sim.advance_runners("out", [False, False, True], 0, random.Random(0), reach_on_error=1.0)
+        never = sim.advance_runners("out", [False, False, False], 0, random.Random(0), reach_on_error=0.0)
+        self.assertEqual(always, (1, [True, False, False], 0))
+        self.assertEqual(never, (0, [False, False, False], 1))
+
+    def test_fielding_team_error_rate_is_used_for_opponent_half_innings(self):
+        used = []
+        original = sim.play_half_inning
+
+        def recording(model, offense, pitcher, rng, runs_to_win=None, reach_on_error=None):
+            used.append((offense.lineup[0].key[0], reach_on_error))
+            return 0
+
+        sim.play_half_inning = recording
+        try:
+            home = sim.TeamPlan("h", [player("h1")], player("h-sp"), [], reach_on_error=0.01)
+            away = sim.TeamPlan("a", [player("a1")], player("a-sp"), [], reach_on_error=0.05)
+            sim.simulate_game(ScriptedModel(), home, away, random.Random(0))
+        finally:
+            sim.play_half_inning = original
+        self.assertEqual(set(used), {("a", 0.01), ("h", 0.05)})  # 원정 공격 = 홈 수비
+
 
 class ModelTest(unittest.TestCase):
 
@@ -173,6 +198,35 @@ class ModelTest(unittest.TestCase):
             rows = [r for r in csv.DictReader(f) if r["IP"] and r["ERA"]]
         ip = [sim.innings(float(r["IP"])) for r in rows]
         return sum(float(r["ERA"]) * i for r, i in zip(rows, ip)) / sum(ip)
+
+
+class TeamFieldingTest(unittest.TestCase):
+
+    def test_error_factors_are_regressed_and_average_to_league(self):
+        rows = [{"Team": "A", "E": "120", "INN": "1200.0"}, {"Team": "B", "E": "80", "INN": "1200.0"}]
+        factors = sim._team_error_factors(rows)
+
+        self.assertGreater(factors["A"], 1)
+        self.assertLess(factors["A"], 1.2)  # 관측 배수 1.2 보다 리그 평균 쪽으로
+        self.assertAlmostEqual((factors["A"] + factors["B"]) / 2, 1.0)
+
+    def test_model_reads_fielding_csv_and_warns_for_missing_team(self):
+        folder = tempfile.mkdtemp()
+        for name in ("hitters.csv", "pitchers.csv"):
+            shutil.copy(os.path.join(STATIC_DIR, name), folder)
+        with open(os.path.join(folder, "fielding.csv"), "w", encoding="utf-8") as f:
+            f.write("Year,Team,E,INN\n2026,LG,70,1200.0\n2026,KT,110,1200.0\n")
+        model = sim.Model(folder)
+
+        self.assertLess(model.reach_on_error("LG"), sim.P_REACH_ON_ERROR)
+        self.assertGreater(model.reach_on_error("KT"), sim.P_REACH_ON_ERROR)
+        self.assertEqual(model.reach_on_error("두산"), sim.P_REACH_ON_ERROR)
+        self.assertEqual(len(model.warnings), 1)
+
+    def test_without_fielding_csv_every_team_uses_league_rate(self):
+        model = sim.Model()
+        self.assertEqual(model.reach_on_error("LG"), sim.P_REACH_ON_ERROR)
+        self.assertEqual(model.warnings, [])
 
 
 class RunTest(unittest.TestCase):
