@@ -3,85 +3,94 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>예측 성적</title>
+<title>KWB 승부예측 — 예측 성적</title>
+<link rel="stylesheet" th:href="@{/css/kwb.css}" />
 <style>
-  body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f7f9fc; margin: 0; padding: 20px; color: #1f2937; }
-  a { color: #2563eb; }
-  h1 { margin: 8px 0 4px; }
-  .lead { color: #6b7280; margin: 0 0 20px; font-size: 14px; }
-  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th, td { border-bottom: 1px solid #eef0f3; padding: 6px 6px; text-align: left; white-space: nowrap; }
-  th { color: #6b7280; font-weight: 600; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .ok { color: #059669; font-weight: bold; }
-  .ng { color: #dc2626; font-weight: bold; }
-  .muted { color: #6b7280; }
-  .error { color: #dc2626; font-weight: bold; }
-  input[type=number] { width: 52px; }
-  .summary td.big { font-size: 20px; font-weight: bold; }
+  input[type=number] { width: 56px; }
+  table.record td, table.record th { white-space: nowrap; }
 </style>
 </head>
 <body>
 
-<a href="/">← 경기 목록</a>
-<h1>예측 성적</h1>
-<p class="lead">경기마다 단계별로 <b>경기 시작 전에 기록한 것 중 가장 늦은 예측</b> 하나만 채점합니다.
+<header th:replace="~{fragments/header :: nav(active='predictions')}"></header>
+
+<div class="page">
+<div class="section-head">
+  <h1>예측 성적</h1>
+  <p>경기마다 단계별로 <b>경기 시작 전에 기록한 것 중 가장 늦은 예측</b> 하나만 채점합니다.
   무승부와 결과가 없는 경기는 빼고, 예측값은 무승부가 아닐 때 홈팀이 이길 확률입니다.</p>
+</div>
 
-<p class="error" th:if="${error}" th:text="${error}"></p>
+<p class="error-text" th:if="${error}" th:text="${error}"></p>
 
-<div class="card summary">
-  <h3>요약</h3>
+<div class="card">
+  <h3 class="card-title">요약</h3>
   <p class="muted" th:if="${report.summaries().isEmpty()}">아직 채점된 예측이 없습니다. 예측을 기록하고 경기 결과가 들어오면 여기에 나타납니다.</p>
-  <table th:unless="${report.summaries().isEmpty()}">
-    <tr><th>단계</th><th class="num">채점 경기</th><th class="num">적중률</th><th class="num">Brier ↓</th>
-        <th class="num">Log loss ↓</th><th class="num">동전 대비 ↑</th></tr>
-    <tr th:each="s : ${report.summaries()}">
-      <td th:text="${s.key == 'analyze' ? '라인업 발표 전 (시나리오 기댓값)' : '라인업 발표 후 (확정 예측)'}"></td>
-      <td class="num big" th:text="${s.value.games()}"></td>
-      <td class="num big" th:text="${#numbers.formatPercent(s.value.accuracy(), 1, 1)}"></td>
-      <td class="num" th:text="${#numbers.formatDecimal(s.value.brier(), 1, 4)}"></td>
-      <td class="num" th:text="${#numbers.formatDecimal(s.value.logLoss(), 1, 4)}"></td>
-      <td class="num" th:text="${(s.value.brierSkill() >= 0 ? '+' : '') + #numbers.formatDecimal(s.value.brierSkill() * 100, 1, 1) + '%'}"></td>
-    </tr>
-  </table>
-  <p class="muted">Brier: 예측 확률과 실제 결과(0/1) 차이의 제곱 평균. 동전 던지기(항상 50%)는 0.25입니다.
+  <div th:unless="${report.summaries().isEmpty()}" class="stat-grid" style="margin-bottom:14px">
+    <div class="stat-tile" th:each="s : ${report.summaries()}">
+      <div class="label" th:text="${s.key == 'analyze' ? '라인업 발표 전' : '라인업 발표 후'}"></div>
+      <div class="value" th:text="${#numbers.formatPercent(s.value.accuracy(), 1, 1)}"></div>
+      <div class="sub" th:text="${s.value.games() + '경기 채점 · 동전 대비 ' + (s.value.brierSkill() >= 0 ? '+' : '') + #numbers.formatDecimal(s.value.brierSkill() * 100, 1, 1) + '%'}"></div>
+    </div>
+  </div>
+  <div class="table-wrap" th:unless="${report.summaries().isEmpty()}">
+    <table class="table">
+      <tr><th>단계</th><th class="num">채점 경기</th><th class="num">적중률</th><th class="num">Brier ↓</th>
+          <th class="num">Log loss ↓</th><th class="num">동전 대비 ↑</th></tr>
+      <tr th:each="s : ${report.summaries()}">
+        <td th:text="${s.key == 'analyze' ? '라인업 발표 전 (시나리오 기댓값)' : '라인업 발표 후 (확정 예측)'}"></td>
+        <td class="num" th:text="${s.value.games()}"></td>
+        <td class="num" th:text="${#numbers.formatPercent(s.value.accuracy(), 1, 1)}"></td>
+        <td class="num" th:text="${#numbers.formatDecimal(s.value.brier(), 1, 4)}"></td>
+        <td class="num" th:text="${#numbers.formatDecimal(s.value.logLoss(), 1, 4)}"></td>
+        <td class="num" th:text="${(s.value.brierSkill() >= 0 ? '+' : '') + #numbers.formatDecimal(s.value.brierSkill() * 100, 1, 1) + '%'}"></td>
+      </tr>
+    </table>
+  </div>
+  <p class="muted" style="margin-top:12px">Brier: 예측 확률과 실제 결과(0/1) 차이의 제곱 평균. 동전 던지기(항상 50%)는 0.25입니다.
     동전 대비 = 1 − Brier ÷ 0.25. 경기 수가 적을 때는 우연의 영향이 큽니다 (50경기 기준 적중률 오차 약 ±7%p).</p>
 </div>
 
 <div class="card">
-  <h3>전체 기록</h3>
-  <p class="muted" th:if="${report.entries().isEmpty()}">기록된 예측이 없습니다. 경기 목록의 <b>예측</b> 화면에서 결과 아래 "이 예측 기록하기"를 누르세요.</p>
-  <table th:unless="${report.entries().isEmpty()}">
+  <h3 class="card-title">전체 기록</h3>
+  <p class="muted" th:if="${report.entries().isEmpty()}">기록된 예측이 없습니다. 경기 목록의 <b>승부예측</b> 화면에서 결과 아래 "이 예측 기록하기"를 누르세요.</p>
+  <div class="table-wrap" th:unless="${report.entries().isEmpty()}">
+  <table class="table record">
     <tr><th>경기일</th><th>경기</th><th>단계</th><th>기록 시각</th><th>선발</th><th class="num">홈 승률 예측</th>
         <th>결과</th><th>채점</th></tr>
     <tr th:each="e : ${report.entries()}" th:with="r=${e.row()}">
       <td th:text="${r.gameDate}"></td>
-      <td th:text="${r.awayTeam + ' @ ' + r.homeTeam}"></td>
+      <td>
+        <span class="badge badge-sm" th:data-team="${r.awayTeam}" th:text="${r.awayTeam}" style="margin-right:4px"></span>
+        <span th:text="${r.awayTeam}"></span> @
+        <span class="badge badge-sm" th:data-team="${r.homeTeam}" th:text="${r.homeTeam}" style="margin:0 4px"></span>
+        <span th:text="${r.homeTeam}"></span>
+      </td>
       <td th:text="${r.stage == 'analyze' ? '발표 전' : '발표 후'}"></td>
-      <td th:text="${#temporals.format(r.createdAt, 'MM-dd HH:mm:ss')}"></td>
+      <td class="muted" th:text="${#temporals.format(r.createdAt, 'MM-dd HH:mm:ss')}"></td>
       <td class="muted" th:text="${(r.awayStarter ?: '-') + ' vs ' + (r.homeStarter ?: '-')}"></td>
       <td class="num" th:text="${#numbers.formatPercent(r.homeWinProb, 1, 1)}"></td>
       <td>
         <span th:if="${r.homeScore != null}"
               th:text="${r.awayTeam + ' ' + r.awayScore + ' : ' + r.homeScore + ' ' + r.homeTeam}"></span>
-        <form th:if="${r.homeScore == null}" method="post" action="/predictions/results" style="display:inline">
+        <form th:if="${r.homeScore == null}" method="post" action="/predictions/results" style="display:inline-flex;align-items:center;gap:4px">
           <input type="hidden" name="gameDate" th:value="${r.gameDate}" />
           <input type="hidden" name="homeTeam" th:value="${r.homeTeam}" />
           <input type="hidden" name="awayTeam" th:value="${r.awayTeam}" />
           <span th:text="${r.awayTeam}"></span> <input type="number" name="awayScore" min="0" required />
           : <input type="number" name="homeScore" min="0" required /> <span th:text="${r.homeTeam}"></span>
-          <button type="submit">결과 입력</button>
+          <button class="btn btn-ghost btn-sm" type="submit">결과 입력</button>
         </form>
       </td>
       <td>
-        <span th:if="${e.status().name() == 'SCORED'}" th:class="${e.correct() ? 'ok' : 'ng'}"
-              th:text="${(e.correct() ? '적중' : '빗나감') + ' (Brier ' + #numbers.formatDecimal(e.brier(), 1, 3) + ')'}"></span>
+        <span th:if="${e.status().name() == 'SCORED'}" th:class="${e.correct() ? 'ok-pill' : 'ng-pill'}"
+              th:text="${(e.correct() ? '적중' : '빗나감') + ' · Brier ' + #numbers.formatDecimal(e.brier(), 1, 3)}"></span>
         <span th:unless="${e.status().name() == 'SCORED'}" class="muted" th:text="${e.status().label}"></span>
       </td>
     </tr>
   </table>
+  </div>
+</div>
 </div>
 
 </body>

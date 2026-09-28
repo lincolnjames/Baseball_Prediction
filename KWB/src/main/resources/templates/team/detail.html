@@ -1,163 +1,91 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
 <head>
   <meta charset="UTF-8">
-  <title>Match Detail</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title th:text="${teamName} + ' — 팀 정보'">팀 정보</title>
+  <link rel="stylesheet" th:href="@{/css/kwb.css}" />
   <style>
-    body {
-      font-family: 'Arial', sans-serif;
-      background: #f5f5f5;
-      margin: 0;
-      padding: 20px;
+    .team-hero {
+      display: flex; align-items: center; gap: 16px; margin: 4px 0 22px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+      padding: 20px; box-shadow: var(--shadow-card);
     }
-
-    .detail-page {
-      max-width: 600px;
-      margin: auto;
-    }
-
-    .page-title {
-      text-align: center;
-      font-size: 32px;
-      font-weight: bold;
-      margin-bottom: 30px;
-    }
-
-   
-
-    .tab {
-      border: 2px solid black;
-      padding: 8px 20px;
-      border-radius: 20px;
-      background: white;
-      font-weight: bold;
-      cursor: pointer;
-    }
-
-
-    .lineup-card {
-      background: #fff;
-      padding: 15px;
-      border-radius: 12px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-      margin-bottom: 20px;
-    }
-
-    .lineup-card h3 {
-      margin-bottom: 10px;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
-    }
-
-    th, td {
-      border: 1px solid #ddd;
-      padding: 6px;
-      text-align: center;
-    }
-
-    .pitcher-recommend h3 {
-      margin-bottom: 10px;
-    }
-
-    .pitcher-cards {
-      display: flex;
-      gap: 10px;
-      justify-content: space-between;
-    }
-
-    .pitcher-card {
-      background: #fff;
-      padding: 10px;
-      border-radius: 12px;
-      text-align: center;
-      width: 30%;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-
-    .pitcher-card img {
-      width: 100%;
-      height: auto;
-      border-radius: 8px;
-    }
+    .team-hero .name { font-size: 22px; font-weight: 800; }
+    .team-hero .sub { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
   </style>
 </head>
 <body>
-  <div class="detail-page">
 
+<header th:replace="~{fragments/header :: nav(active='schedule')}"></header>
 
-    <!-- Match Info -->
-    
-    <!-- Team Tabs -->
-    <div class="team-tabs">
-      
-		<button class="tab" th:text="${teamName}">팀</button>
+<div class="page">
+  <div class="team-hero" th:data-team="${teamName}">
+    <span class="badge badge-xl" th:data-team="${teamName}" th:text="${teamName}"></span>
+    <div>
+      <div class="name" th:text="${teamName}">팀</div>
+      <div class="sub">타자 <span th:text="${hitterList.size()}">0</span>명 · 투수 <span th:text="${pitcherList.size()}">0</span>명</div>
     </div>
-
-    <!-- Lineup Table -->
-    <div class="lineup-card">
-      <h3>타자</h3>
-	  <table>
-	    <thead>
-	      <tr>
-	        <th>#</th>
-	        <th>이름</th>
-	        <th>타율</th>
-	        <th>출루율</th>
-	        <th>장타율</th>
-	      </tr>
-	    </thead>
-	    <tbody>
-	      <tr th:each="HitterDTO, stat : ${hitterList}">
-	        <td th:text="${stat.index + 1}">1</td>
-			<td th:text="${HitterDTO.player}">홍길동</td>
-			<td th:text="${HitterDTO.AVG}">0.259</td>
-			<td th:text="${HitterDTO.OBP}">0.333</td>
-			<td th:text="${HitterDTO.SLG}">0.393</td>
-	      </tr>
-	    </tbody>
-	  </table>
-      
-    </div>
-
-    <!-- Pitcher Recommendations -->
-	<div class="lineup-card">
-      <h3>투수</h3>
-	  <table>
-	          <thead>
-	            <tr>
-	              <th>#</th>
-	              <th>이름</th>
-	              <th>경기수</th>
-	              <th>승리</th>
-	              <th>패배</th>
-	              <th>이닝수</th>
-	              <th>자책점</th>
-	              <th>주자 허용율</th>
-	              
-	            </tr>
-	          </thead>
-	          <tbody>
-	            <tr th:each="PitcherDTO, stat : ${pitcherList}">
-	              <td th:text="${stat.index + 1}">1</td>
-	              <td th:text="${PitcherDTO.player}">홍길동</td>
-	              <td th:text="${PitcherDTO.G}">32</td>
-	              <td th:text="${PitcherDTO.W}">128</td>
-	              <td th:text="${PitcherDTO.L}">5</td>
-	              <td th:text="${PitcherDTO.IP}">3</td>
-	              <td th:text="${PitcherDTO.ERA}">3</td>
-	              <td th:text="${PitcherDTO.WHIP}">0.5</td>
-	              
-	            </tr>
-	          </tbody>
-	        </table>
-	  
-    </div>
-
   </div>
-  
+
+  <div class="card">
+    <h3 class="card-title">타자</h3>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>이름</th>
+            <th class="num">타율</th>
+            <th class="num">출루율</th>
+            <th class="num">장타율</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr th:each="HitterDTO, stat : ${hitterList}">
+            <td class="muted" th:text="${stat.index + 1}">1</td>
+            <td th:text="${HitterDTO.player}">홍길동</td>
+            <td class="num" th:text="${HitterDTO.AVG}">0.259</td>
+            <td class="num" th:text="${HitterDTO.OBP}">0.333</td>
+            <td class="num" th:text="${HitterDTO.SLG}">0.393</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">투수</h3>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>이름</th>
+            <th class="num">경기수</th>
+            <th class="num">승리</th>
+            <th class="num">패배</th>
+            <th class="num">이닝수</th>
+            <th class="num">평균자책</th>
+            <th class="num">WHIP</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr th:each="PitcherDTO, stat : ${pitcherList}">
+            <td class="muted" th:text="${stat.index + 1}">1</td>
+            <td th:text="${PitcherDTO.player}">홍길동</td>
+            <td class="num" th:text="${PitcherDTO.G}">32</td>
+            <td class="num" th:text="${PitcherDTO.W}">128</td>
+            <td class="num" th:text="${PitcherDTO.L}">5</td>
+            <td class="num" th:text="${PitcherDTO.IP}">3</td>
+            <td class="num" th:text="${PitcherDTO.ERA}">3</td>
+            <td class="num" th:text="${PitcherDTO.WHIP}">0.5</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

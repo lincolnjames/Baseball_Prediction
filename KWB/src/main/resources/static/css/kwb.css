@@ -1,0 +1,339 @@
+/* KWB 승부예측 — 공통 디자인 시스템
+   서버 렌더(Thymeleaf)와 JS 렌더 화면이 같은 클래스를 쓴다. 팀 색은 data-team 속성으로 입힌다. */
+
+:root {
+  --bg: #eef1f7;
+  --surface: #ffffff;
+  --surface-alt: #f6f7fb;
+  --border: #e3e7ef;
+  --text: #111827;
+  --text-muted: #6b7280;
+  --text-faint: #9ca3af;
+  --primary: #1d4ed8;
+  --primary-dark: #1a3fb0;
+  --away: #64748b;
+  --success: #059669;
+  --success-bg: #ecfdf5;
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --warning: #b45309;
+  --warning-bg: #fffbeb;
+  --radius-lg: 18px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, .04), 0 10px 24px -16px rgba(15, 23, 42, .25);
+  --shadow-pop: 0 12px 28px -12px rgba(15, 23, 42, .35);
+  --header-bg: #0b1220;
+  --header-fg: #e7ebf5;
+  --team: #1d4ed8; /* data-team 이 없을 때 기본값 */
+}
+
+/* ---------- 팀 색 ---------- */
+[data-team="KIA"]   { --team: #d0021b; }
+[data-team="삼성"]   { --team: #0a4fa0; }
+[data-team="LG"]    { --team: #c30452; }
+[data-team="두산"]   { --team: #131a3c; }
+[data-team="KT"]    { --team: #111111; }
+[data-team="SSG"]   { --team: #e2231a; }
+[data-team="롯데"]   { --team: #041e42; }
+[data-team="한화"]   { --team: #d9480f; }
+[data-team="NC"]    { --team: #1d2e45; }
+[data-team="키움"]   { --team: #7a1734; }
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Malgun Gothic', 'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1, h2, h3 { margin: 0; }
+.muted { color: var(--text-muted); }
+.faint { color: var(--text-faint); }
+.error-text { color: var(--danger); font-weight: bold; }
+.hidden { display: none !important; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.center { text-align: center; }
+
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 20px 60px;
+}
+.page-narrow { max-width: 860px; }
+
+/* ---------- 헤더 ---------- */
+.app-header {
+  background: var(--header-bg);
+  color: var(--header-fg);
+  margin-bottom: 28px;
+}
+.app-header-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+.brand:hover { text-decoration: none; opacity: .9; }
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #2563eb, #1e3a8a);
+  font-size: 16px;
+}
+.app-nav { display: flex; gap: 4px; }
+.app-nav a {
+  color: #b7c0d6;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 999px;
+  transition: background .15s, color .15s;
+}
+.app-nav a:hover { text-decoration: none; color: #fff; background: rgba(255,255,255,.08); }
+.app-nav a.active { color: #fff; background: rgba(37, 99, 235, .35); }
+
+/* ---------- 섹션 타이틀 ---------- */
+.section-head { margin: 4px 0 16px; }
+.section-head h1 { font-size: 22px; letter-spacing: -0.02em; }
+.section-head p { margin: 4px 0 0; color: var(--text-muted); font-size: 13.5px; }
+
+/* ---------- 탭 ---------- */
+.pill-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 4px 2px 10px;
+  margin-bottom: 6px;
+  scrollbar-width: thin;
+}
+.pill-tab {
+  flex: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s;
+}
+.pill-tab:hover { border-color: #c7d0e0; color: var(--text); }
+.pill-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* ---------- 팀 배지 / 칩 ---------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--team);
+  color: #fff;
+  font-weight: 800;
+  line-height: 1;
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+  letter-spacing: -0.03em;
+  padding: 0 2px;
+}
+.badge-sm { width: 24px; height: 24px; font-size: 8.5px; }
+.badge-md { width: 36px; height: 36px; font-size: 10.5px; }
+.badge-lg { width: 52px; height: 52px; font-size: 14px; }
+.badge-xl { width: 72px; height: 72px; font-size: 18px; }
+
+.team-chip-row {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 6px 2px 18px;
+  margin-bottom: 8px;
+}
+.team-chip {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 56px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-align: center;
+}
+.team-chip:hover { text-decoration: none; color: var(--text); }
+.team-chip .badge { box-shadow: 0 3px 8px -3px rgba(15,23,42,.4); }
+.team-chip.all .badge { background: var(--surface); border: 1.5px dashed #c7d0e0; color: var(--text-muted); }
+
+/* ---------- 카드 ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.card-title { font-size: 15px; font-weight: 800; margin: 0 0 12px; letter-spacing: -0.01em; }
+.card.alert-warn { background: var(--warning-bg); border-color: #fde8c4; color: var(--warning); }
+.card.alert-error { background: var(--danger-bg); border-color: #fbd1ce; color: var(--danger); }
+
+/* ---------- 경기 일정 ---------- */
+.schedule-date {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--text-muted);
+  margin: 22px 2px 10px;
+}
+.schedule-date:first-child { margin-top: 4px; }
+.game-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  box-shadow: var(--shadow-card);
+  flex-wrap: wrap;
+}
+.game-matchup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.game-team { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.game-team .name { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.game-team .tag { font-size: 10.5px; color: var(--text-faint); font-weight: 700; }
+.game-vs { color: var(--text-faint); font-size: 12px; font-weight: 700; flex: none; }
+.game-actions { display: flex; gap: 8px; flex: none; margin-left: auto; }
+.empty-state {
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* ---------- 버튼 ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 9px 16px;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter .15s, transform .05s;
+  white-space: nowrap;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .5; cursor: wait; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { filter: brightness(1.08); text-decoration: none; }
+.btn-secondary { background: var(--success); color: #fff; }
+.btn-secondary:hover { filter: brightness(1.08); text-decoration: none; }
+.btn-ghost { background: var(--surface-alt); color: var(--text); border: 1px solid var(--border); }
+.btn-ghost:hover { background: #eceff5; text-decoration: none; }
+.btn-lg { padding: 14px 30px; font-size: 15.5px; border-radius: var(--radius-md); }
+.btn-sm { padding: 6px 12px; font-size: 12.5px; }
+.btn-block { width: 100%; }
+
+/* ---------- 승률 바 ---------- */
+.prob-bar {
+  display: flex;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font-weight: 800;
+  color: #fff;
+  margin: 10px 0;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
+}
+.prob-bar .seg {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  white-space: nowrap;
+  background: var(--team);
+  font-size: 14px;
+}
+.prob-bar .seg.away { justify-content: flex-start; }
+.prob-bar .seg.home { justify-content: flex-end; }
+
+/* ---------- 표 ---------- */
+table.table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+table.table th, table.table td { border-bottom: 1px solid var(--border); padding: 8px 8px; text-align: left; }
+table.table th { color: var(--text-muted); font-weight: 700; font-size: 12.5px; }
+table.table tbody tr:hover { background: var(--surface-alt); }
+.table-wrap { overflow-x: auto; }
+
+/* ---------- 폼 요소 ---------- */
+select, input[type=text], input[type=number], input[type=date] {
+  font-family: inherit;
+  font-size: 13.5px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+select:focus, input:focus { outline: 2px solid #bfdbfe; border-color: var(--primary); }
+label { font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
+
+/* ---------- 상태 텍스트 ---------- */
+.up { color: var(--success); font-weight: 800; }
+.down { color: var(--danger); font-weight: 800; }
+.ok-pill, .ng-pill {
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.ok-pill { background: var(--success-bg); color: var(--success); }
+.ng-pill { background: var(--danger-bg); color: var(--danger); }
+
+/* ---------- 통계 타일 ---------- */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat-tile { background: var(--surface-alt); border-radius: var(--radius-md); padding: 14px 16px; }
+.stat-tile .label { font-size: 12px; color: var(--text-muted); font-weight: 700; }
+.stat-tile .value { font-size: 24px; font-weight: 800; margin-top: 4px; letter-spacing: -0.02em; }
+.stat-tile .sub { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+
+@media (max-width: 640px) {
+  .page { padding: 0 14px 48px; }
+  .app-header-inner { padding: 12px 14px; }
+  .game-card { padding: 10px 12px; }
+  .game-actions { margin-left: 0; width: 100%; justify-content: flex-end; }
+  .card { padding: 16px; }
+}
