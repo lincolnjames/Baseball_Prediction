@@ -112,9 +112,35 @@ def read_tables(folder):
 
 
 def pair(first, second, label):
-    missing = [f"{label} 1번 표에만 있음: {k}" for k in first if k not in second]
-    missing += [f"{label} 2번 표에만 있음: {k}" for k in second if k not in first]
-    return [(k, first[k], second[k]) for k in first if k in second], missing
+    """1번 표와 2번 표를 (팀, 이름)으로 짝짓는다.
+
+    순위로 짝짓지 않는 이유: KBO 리그 전체 보기에서는 순위 자격 기준(최소 이닝 등) 미달 선수를
+    전부 같은 순위 번호로 묶는데, 그 번호가 표마다 다르게 매겨져 순위로는 짝을 지을 수 없다.
+    같은 팀에 동명이인이 있으면(그룹 크기 > 1) 그 작은 범위 안에서만 순위로 순서를 맞춘다.
+    """
+    def group(table):
+        groups = defaultdict(list)
+        for row in table.values():
+            groups[(row["team"], row["name"])].append(row)
+        return groups
+
+    first_groups, second_groups = group(first), group(second)
+    pairs, missing = [], []
+    for name_key in sorted(set(first_groups) | set(second_groups)):
+        a, b = first_groups.get(name_key, []), second_groups.get(name_key, [])
+        if not a:
+            missing.append(f"{label} 2번 표에만 있음: {name_key}")
+            continue
+        if not b:
+            missing.append(f"{label} 1번 표에만 있음: {name_key}")
+            continue
+        if len(a) != len(b):
+            missing.append(f"{label} {name_key} 동명이인 수가 두 표에서 다름(1번 {len(a)}명, 2번 {len(b)}명) - 짝짓기 보류")
+            continue
+        a.sort(key=lambda r: int(r["rank"]))
+        b.sort(key=lambda r: int(r["rank"]))
+        pairs.extend((name_key, ra, rb) for ra, rb in zip(a, b))
+    return pairs, missing
 
 
 def check(label, key, name, expected, actual, tolerance):

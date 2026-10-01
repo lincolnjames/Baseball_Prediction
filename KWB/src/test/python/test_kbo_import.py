@@ -103,6 +103,26 @@ class VerificationTest(unittest.TestCase):
         self.assertEqual(sorted(p["Player"] for p in pitchers), ["라투수(20경기)", "라투수(40경기)", "마투수"])
         self.assertEqual(len(renamed), 2)
 
+    def test_rank_placeholder_mismatch_between_tables_still_pairs_by_name(self):
+        # KBO 리그 전체 보기는 순위 자격 미달 선수를 전부 같은 '묶음 순위'로 매기는데, 그 묶음 번호가
+        # 표마다 다르다(예: 1번 표에선 1,2 그대로지만 2번 표에선 둘 다 '5'). 순위가 안 맞아도
+        # (팀,이름)으로 짝지어야 한다.
+        mismatched_p2 = [
+            "5\t라투수\tKT\t3.00\t0\t0\t10\t0\t500\t1900\t0.239\t20\t2\t3\t2\t0\t3\t0",
+            "5\t마투수\tKT\t4.46\t0\t0\t0\t2\t175\t700\t0.256\t8\t1\t1\t1\t1\t1\t0",
+        ]
+        _, pitchers, problems, _ = ki.build(complete_folder(**{"p2.txt": mismatched_p2}), 2026)
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(p["Player"] for p in pitchers), ["라투수", "마투수"])
+
+    def test_twin_count_mismatch_between_tables_is_reported_not_misassigned(self):
+        # 1번 표엔 동명이인이 2명인데 2번 표엔 1명뿐이면, 둘 중 누구와 짝지어야 할지 알 수 없으므로
+        # 섣불리 짝짓지 말고 보류해야 한다.
+        twin1 = PITCHER1 + ["3\t라투수\tKT\t4.46\t40\t2\t2\t10\t5\t0.500\t40 1/3\t40\t4\t15\t2\t35\t22\t20\t1.36"]
+        _, _, problems, _ = ki.build(complete_folder(**{"p1.txt": twin1}), 2026)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("동명이인 수가", problems[0])
+
 
 SCHEDULE_PAGE = """전체
 LGLG
