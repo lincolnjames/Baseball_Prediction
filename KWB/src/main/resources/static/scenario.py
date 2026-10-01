@@ -297,10 +297,17 @@ def optimize(args):
 
     # 자리별 후보와 교체 효과 (analyze() 의 run_value 계산과 동일). runs_delta·delta_win 은
     # 둘 다 "target 팀 자신" 관점이다 (홈/원정 상관없이, 양수면 target 에게 이득).
+    #
+    # 수비 자리(DH 제외)는 "그 포지션에 실제로 선발 출장한 기록"이 있는 선수만 후보로 삼는다.
+    # roster.candidates() 는 포지션 기록이 전혀 없는 데이터(has_positions=False)에서 타석 수만으로
+    # 후보를 고르는데, 그건 "효과를 보여주기만" 하는 analyze() 에선 괜찮지만 실제로 포지션을 맡기라고
+    # 추천하는 여기서는 위험하다 (한 포지션만 뛰어본 선수를 안 뛰어본 자리로 추천할 수 있음).
     slot_options = []  # [(slot_index, candidate_name, delta_win, runs_delta), ...]
     for i, s in enumerate(specs[target]["lineup"]):
         current = run_value(model, plans[target].lineup[i], opponent)
         for name, _weight in roster.candidates(team, s["pos"], names):
+            if s["pos"] != DH and roster.gs[(team, name)].get(s["pos"], 0) <= 0:
+                continue
             runs_delta = (run_value(model, model.batter(team, name), opponent) - current) * PA_BY_ORDER[i]
             delta_win = runs_delta * win_per_run
             if delta_win > 0:
@@ -353,6 +360,7 @@ def optimize(args):
         "changes": changes,
         "verified_improvement": recommended_win - current_win,
         "games": GAMES_OPTIMIZE,
+        "positions_available": roster.has_positions,
         "warnings": model.warnings,
         "elapsed_time": time.time() - started,
     }

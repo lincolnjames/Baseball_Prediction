@@ -143,6 +143,35 @@ class OptimizeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             sc.optimize(args(target="bogus"))
 
+    def test_without_position_data_only_dh_is_recommended(self):
+        # 저장소 기본 테스트 데이터엔 positions.csv 가 없다 (has_positions=False). 이 상태에서는
+        # "그 포지션을 뛰어본 적 있는지"를 확인할 수 없으므로, 수비 자리(DH 제외)는 추천하면 안 된다.
+        for target in ("home", "away"):
+            r = sc.optimize(args(target=target))
+            self.assertFalse(r["positions_available"])
+            for c in r["changes"]:
+                self.assertEqual(c["pos"], sc.DH,
+                    f"포지션 데이터 없이 수비 자리({c['pos']})에 {c['to']} 를 추천함")
+
+    def test_with_position_data_fielding_changes_require_a_recorded_start(self):
+        folder = tempfile.mkdtemp()
+        for name in ("hitters.csv", "pitchers.csv"):
+            shutil.copy(os.path.join(STATIC_DIR, name), folder)
+        with open(os.path.join(folder, "positions.csv"), "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Year", "Team", "Player", "POS", "G", "GS", "INN"])
+            # 주전은 각자 자기 자리만 뛴 것으로 기록하고, 벤치 후보 "구본혁"은 1루수만 뛰어본 것으로 기록한다
+            # (유격수·3루수 등 다른 자리로는 단 한 번도 선발 출장한 적이 없다)
+            writer.writerows([2025, "LG", n, p, 100, 100, "900.0"] for n, p in LG)
+            writer.writerow([2025, "LG", "구본혁", "1루수", 20, 15, "120.0"])
+        roster = sc.Roster(folder)
+        self.assertTrue(roster.has_positions)
+
+        r = sc.optimize(args(data_dir=folder, target="home"))
+        for c in r["changes"]:
+            if c["to"] == "구본혁":
+                self.assertEqual(c["pos"], "1루수", "1루수만 뛰어본 선수를 다른 수비 자리로 추천함")
+
     def test_changes_are_always_positive_for_the_target_side(self):
         # target 이 원정팀이어도 추천된 교체는 "원정팀 자신" 기준으로 득점·승률에 도움이 되어야 한다
         for target in ("home", "away"):
