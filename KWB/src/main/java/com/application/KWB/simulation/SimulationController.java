@@ -57,6 +57,20 @@ public class SimulationController {
 		return simulationService.runScenario(input);
 	}
 
+	@PostMapping("/optimize")
+	public Map<String, Object> optimizeLineup(@RequestBody OptimizeRequest request) throws IOException {
+		String target = request.target();
+		if (!"home".equals(target) && !"away".equals(target)) {
+			throw badRequest("target 은 home 또는 away 여야 합니다.");
+		}
+		Map<String, Object> input = new LinkedHashMap<>();
+		input.put("mode", "optimize");
+		input.put("target", target);
+		input.put("home", toScenarioTeam("홈팀", request.homeTeam(), request.home()));
+		input.put("away", toScenarioTeam("원정팀", request.awayTeam(), request.away()));
+		return simulationService.runScenario(input);
+	}
+
 	/** 입력 오류(스크립트의 검증 실패 포함)는 400 과 메시지로 응답한다 */
 	@ExceptionHandler(IllegalArgumentException.class)
 	public ResponseEntity<Map<String, String>> handleInvalidInput(IllegalArgumentException e) {

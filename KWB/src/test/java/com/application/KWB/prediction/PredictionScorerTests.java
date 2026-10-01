@@ -59,6 +59,22 @@ class PredictionScorerTests {
 	}
 
 	@Test
+	void afterStartPredictionIsScoredInInclusiveSummaryOnly() {
+		PredictionRow early = row("predict", "2026-09-29T17:50:00", 0.40, 5, 3, "18:30");
+		PredictionRow afterStart = row("predict", "2026-09-29T20:00:00", 0.99, 5, 3, "18:30");
+
+		PredictionScorer.Report report = PredictionScorer.score(List.of(early, afterStart));
+
+		assertThat(report.summaries().get("predict").games()).isEqualTo(1);
+		Map<Long, Entry> byId = report.entries().stream().collect(Collectors.toMap(e -> e.row().getId(), Function.identity()));
+		assertThat(byId.get(early.getId()).status()).isEqualTo(Status.SCORED);
+
+		// 사후 기록 포함 지표는 "가장 최근 기록"(afterStart)을 기준으로 채점한다
+		assertThat(report.inclusiveSummaries().get("predict").games()).isEqualTo(1);
+		assertThat(report.inclusiveSummaries().get("predict").correct()).isEqualTo(1);
+	}
+
+	@Test
 	void predictionAtExactStartTimeIsExcluded() {
 		PredictionRow atStart = row("predict", "2026-09-29T14:00:00", 0.6, 1, 0, "14:00");
 		assertThat(PredictionScorer.score(List.of(atStart)).entries().get(0).status()).isEqualTo(Status.AFTER_START);

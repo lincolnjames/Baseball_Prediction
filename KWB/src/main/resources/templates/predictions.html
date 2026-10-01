@@ -52,6 +52,34 @@
 </div>
 
 <div class="card">
+  <h3 class="card-title">요약 (사후 기록 포함)</h3>
+  <p class="muted">경기 종료 후 결과를 보고 기록한 예측도 포함합니다. 위 지표와 달리 사후 끼워맞추기를 막는 장치가 없어
+    실제 예측 능력을 과대평가할 수 있습니다 — 참고용입니다.</p>
+  <p class="muted" th:if="${report.inclusiveSummaries().isEmpty()}">아직 채점된 예측이 없습니다.</p>
+  <div th:unless="${report.inclusiveSummaries().isEmpty()}" class="stat-grid" style="margin-bottom:14px">
+    <div class="stat-tile" th:each="s : ${report.inclusiveSummaries()}">
+      <div class="label" th:text="${s.key == 'analyze' ? '라인업 발표 전' : '라인업 발표 후'}"></div>
+      <div class="value" th:text="${#numbers.formatPercent(s.value.accuracy(), 1, 1)}"></div>
+      <div class="sub" th:text="${s.value.games() + '경기 채점 · 동전 대비 ' + (s.value.brierSkill() >= 0 ? '+' : '') + #numbers.formatDecimal(s.value.brierSkill() * 100, 1, 1) + '%'}"></div>
+    </div>
+  </div>
+  <div class="table-wrap" th:unless="${report.inclusiveSummaries().isEmpty()}">
+    <table class="table">
+      <tr><th>단계</th><th class="num">채점 경기</th><th class="num">적중률</th><th class="num">Brier ↓</th>
+          <th class="num">Log loss ↓</th><th class="num">동전 대비 ↑</th></tr>
+      <tr th:each="s : ${report.inclusiveSummaries()}">
+        <td th:text="${s.key == 'analyze' ? '라인업 발표 전 (시나리오 기댓값)' : '라인업 발표 후 (확정 예측)'}"></td>
+        <td class="num" th:text="${s.value.games()}"></td>
+        <td class="num" th:text="${#numbers.formatPercent(s.value.accuracy(), 1, 1)}"></td>
+        <td class="num" th:text="${#numbers.formatDecimal(s.value.brier(), 1, 4)}"></td>
+        <td class="num" th:text="${#numbers.formatDecimal(s.value.logLoss(), 1, 4)}"></td>
+        <td class="num" th:text="${(s.value.brierSkill() >= 0 ? '+' : '') + #numbers.formatDecimal(s.value.brierSkill() * 100, 1, 1) + '%'}"></td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<div class="card">
   <h3 class="card-title">전체 기록</h3>
   <p class="muted" th:if="${report.entries().isEmpty()}">기록된 예측이 없습니다. 경기 목록의 <b>승부예측</b> 화면에서 결과 아래 "이 예측 기록하기"를 누르세요.</p>
   <div class="table-wrap" th:unless="${report.entries().isEmpty()}">

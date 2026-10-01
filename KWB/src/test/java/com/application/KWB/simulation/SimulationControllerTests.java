@@ -131,6 +131,43 @@ class SimulationControllerTests {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void optimizePassesTargetTeamsAndLineupWithPositions() throws Exception {
+		when(simulationService.runScenario(any())).thenReturn(Map.of("recommended", Map.of("win", 0.6)));
+
+		String body = """
+			{"homeTeam":"두산","awayTeam":"NC","target":"home",
+			 "home":{"starter":"곽빈","lineup":%s},
+			 "away":{"starter":"구창모","lineup":%s}}
+			""".formatted(SCENARIO_LINEUP, SCENARIO_LINEUP);
+
+		mockMvc.perform(post("/simulation/optimize").contentType(MediaType.APPLICATION_JSON).content(body))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.recommended.win").value(0.6));
+
+		ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
+		verify(simulationService).runScenario(captor.capture());
+		Map<String, Object> input = captor.getValue();
+		Map<String, Object> home = (Map<String, Object>) input.get("home");
+
+		assertThat(input).containsEntry("mode", "optimize").containsEntry("target", "home");
+		assertThat(home).containsEntry("team", "두산").containsEntry("starter", "곽빈");
+	}
+
+	@Test
+	void optimizeRejectsUnknownTarget() throws Exception {
+		String body = """
+			{"homeTeam":"두산","awayTeam":"NC","target":"guess",
+			 "home":{"starter":"곽빈","lineup":%s},"away":{"starter":"구창모","lineup":%s}}
+			""".formatted(SCENARIO_LINEUP, SCENARIO_LINEUP);
+
+		mockMvc.perform(post("/simulation/optimize").contentType(MediaType.APPLICATION_JSON).content(body))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.message").value("target 은 home 또는 away 여야 합니다."));
+		verify(simulationService, never()).runScenario(any());
+	}
+
+	@Test
 	void rejectsMissingStarter() throws Exception {
 		String body = """
 			{"homeTeam":"LG","awayTeam":"KT",

@@ -130,6 +130,42 @@ class AnalyzeTest(unittest.TestCase):
         self.assertAlmostEqual(changed - base, option["delta_home"], delta=0.009)
 
 
+class OptimizeTest(unittest.TestCase):
+
+    def test_result_shape(self):
+        r = sc.optimize(args(target="home"))
+        self.assertEqual(r["mode"], "optimize")
+        self.assertEqual(r["target"], "home")
+        self.assertEqual(len(r["recommended"]["lineup"]), 9)
+        self.assertEqual(r["games"], sc.GAMES_OPTIMIZE)
+
+    def test_rejects_unknown_target(self):
+        with self.assertRaises(ValueError):
+            sc.optimize(args(target="bogus"))
+
+    def test_changes_are_always_positive_for_the_target_side(self):
+        # target 이 원정팀이어도 추천된 교체는 "원정팀 자신" 기준으로 득점·승률에 도움이 되어야 한다
+        for target in ("home", "away"):
+            r = sc.optimize(args(target=target))
+            for c in r["changes"]:
+                self.assertGreater(c["delta_runs"], 0)
+                self.assertGreater(c["delta_win"], 0)
+
+    def test_recommended_lineup_does_not_hurt_either_side(self):
+        # 홈/원정 어느 쪽을 최적화하든, 검증 시뮬레이션에서 추천 라인업이 기존보다 뚜렷이 나빠지면 안 된다
+        # (부호를 반대로 적용하면 원정팀 추천이 오히려 승률을 깎는 회귀가 생길 수 있다)
+        for target in ("home", "away"):
+            r = sc.optimize(args(target=target))
+            self.assertGreaterEqual(r["recommended"]["win"], r["current"]["win"] - 0.03)
+
+    def test_reapplying_recommendation_does_not_regress(self):
+        first = sc.optimize(args(target="home"))
+        second_args = args(target="home")
+        second_args["home"]["lineup"] = first["recommended"]["lineup"]
+        second = sc.optimize(second_args)
+        self.assertGreaterEqual(second["recommended"]["win"], second["current"]["win"] - 0.03)
+
+
 class PredictTest(unittest.TestCase):
 
     def test_predict_returns_single_probability(self):

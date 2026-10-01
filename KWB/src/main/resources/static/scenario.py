@@ -38,6 +38,7 @@ LINEUP_POSITIONS = FIELD_POSITIONS + [DH]
 
 GAMES_BASE = 4000          # 기준 라인업
 GAMES_PREDICT = 10000      # 확정 예측
+GAMES_OPTIMIZE = 6000      # 최적 라인업 추천 검증 시뮬레이션
 CANDIDATES_PER_SLOT = 3
 LINEUP_DRAWS = 5000
 PA_PER_START = 4.2         # 선발 출장 한 경기당 평균 타석 (선발 비율 추정용)
@@ -270,6 +271,93 @@ def lineup_distribution(slots, base_home, rng):
             "p10": samples[int(len(samples) * 0.1)], "p90": samples[int(len(samples) * 0.9)]}
 
 
+def optimize(args):
+    """target 쪽 라인업에서, 각 자리를 벤치 후보로 바꿨을 때의 득점 효과(analyze() 와 동일한 계산)를
+    모아 전역 그리디로 배정해 승률을 최대화하는 라인업을 추천하고, 시뮬레이션으로 검증한다."""
+    started = time.time()
+    data_dir = args.get("data_dir") or sim.DATA_DIR
+    seed = args.get("seed", 0)
+    target = args.get("target")
+    if target not in ("home", "away"):
+        raise ValueError("target 은 home 또는 away 여야 합니다")
+    model = sim.Model(data_dir)
+    roster = Roster(data_dir)
+    specs = {"home": args["home"], "away": args["away"]}
+    for side, spec in specs.items():
+        validate_lineup(side, spec)
+    plans = {side: build_plan(model, roster, spec) for side, spec in specs.items()}
+
+    base = win_probability(model, plans["home"], plans["away"], GAMES_BASE, seed)
+    runs = (base["home_runs"] + base["away_runs"]) / 2
+    win_per_run = PYTHAGOREAN_EXPONENT / (4 * runs) * SWAP_EFFECT_CALIBRATION
+
+    team = specs[target]["team"]
+    opponent = plans["away" if target == "home" else "home"]
+    names = {s["name"] for s in specs[target]["lineup"]}
+
+    # 자리별 후보와 교체 효과 (analyze() 의 run_value 계산과 동일). runs_delta·delta_win 은
+    # 둘 다 "target 팀 자신" 관점이다 (홈/원정 상관없이, 양수면 target 에게 이득).
+    slot_options = []  # [(slot_index, candidate_name, delta_win, runs_delta), ...]
+    for i, s in enumerate(specs[target]["lineup"]):
+        current = run_value(model, plans[target].lineup[i], opponent)
+        for name, _weight in roster.candidates(team, s["pos"], names):
+            runs_delta = (run_value(model, model.batter(team, name), opponent) - current) * PA_BY_ORDER[i]
+            delta_win = runs_delta * win_per_run
+            if delta_win > 0:
+                slot_options.append((i, name, delta_win, runs_delta))
+
+    # 전역 그리디 배정: 효과가 큰 순서로, 자리·선수가 아직 안 쓰였으면 배정한다
+    # (같은 벤치 선수가 여러 포지션의 후보로 겹치는 경우의 충돌을 막기 위함)
+    slot_options.sort(key=lambda o: -o[2])
+    assigned = {}
+    used_names = set()
+    for slot_index, name, delta_win, runs_delta in slot_options:
+        if slot_index in assigned or name in used_names:
+            continue
+        assigned[slot_index] = (name, delta_win, runs_delta)
+        used_names.add(name)
+
+    recommended_lineup, changes = [], []
+    for i, s in enumerate(specs[target]["lineup"]):
+        if i in assigned:
+            name, delta_win, runs_delta = assigned[i]
+            recommended_lineup.append({"name": name, "pos": s["pos"]})
+            changes.append({"order": i + 1, "pos": s["pos"], "from": s["name"], "to": name,
+                            "delta_runs": runs_delta, "delta_win": delta_win})
+        else:
+            recommended_lineup.append({"name": s["name"], "pos": s["pos"]})
+
+    recommended_spec = dict(specs[target])
+    recommended_spec["lineup"] = recommended_lineup
+    recommended_plan = build_plan(model, roster, recommended_spec)
+
+    # 검증: 같은 seed(공통 난수)로 현재 라인업과 추천 라인업을 같은 경기 수만큼 시뮬레이션해 비교한다
+    current_result = win_probability(model, plans["home"], plans["away"], GAMES_OPTIMIZE, seed)
+    if target == "home":
+        recommended_result = win_probability(model, recommended_plan, plans["away"], GAMES_OPTIMIZE, seed)
+    else:
+        recommended_result = win_probability(model, plans["home"], recommended_plan, GAMES_OPTIMIZE, seed)
+
+    def target_win(result):
+        return result["home"] if target == "home" else 1 - result["home"]
+
+    def target_runs(result):
+        return result["home_runs"] if target == "home" else result["away_runs"]
+
+    current_win, recommended_win = target_win(current_result), target_win(recommended_result)
+    return {
+        "mode": "optimize",
+        "target": target,
+        "current": {"win": current_win, "runs": target_runs(current_result)},
+        "recommended": {"win": recommended_win, "runs": target_runs(recommended_result), "lineup": recommended_lineup},
+        "changes": changes,
+        "verified_improvement": recommended_win - current_win,
+        "games": GAMES_OPTIMIZE,
+        "warnings": model.warnings,
+        "elapsed_time": time.time() - started,
+    }
+
+
 def predict(args):
     started = time.time()
     data_dir = args.get("data_dir") or sim.DATA_DIR
@@ -294,7 +382,13 @@ def main(argv):
             raise ValueError("입력 파일 경로가 필요합니다: py scenario.py input.json")
         with open(argv[1], encoding="utf-8") as f:
             args = json.load(f)
-        result = predict(args) if args.get("mode") == "predict" else analyze(args)
+        mode = args.get("mode")
+        if mode == "predict":
+            result = predict(args)
+        elif mode == "optimize":
+            result = optimize(args)
+        else:
+            result = analyze(args)
     except ValueError as e:  # 입력 오류 → 종료 코드 2 (Java 에서 400 으로 응답)
         print(json.dumps({"error": str(e)}, ensure_ascii=False), flush=True)
         return 2

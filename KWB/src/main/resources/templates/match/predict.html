@@ -130,6 +130,7 @@ function renderTeam(side) {
     <div class="team-actions">
       <button class="btn btn-ghost btn-sm" type="button" data-action="auto">주전 자동 채우기</button>
       <button class="btn btn-ghost btn-sm" type="button" data-action="load">최근 입력 불러오기</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-action="optimize">최적 라인업 추천</button>
     </div>
     ${hasPositions(side) ? '' : '<p class="muted" style="color:var(--warning)">포지션 데이터가 없어 교체 후보를 타석 수로만 고릅니다.</p>'}
     <details class="quick-fill">
@@ -152,6 +153,7 @@ function renderTeam(side) {
   section.querySelector('[data-action=load]').addEventListener('click', () => {
     if (!loadSaved(side)) alert('이 브라우저에 저장된 라인업이 없습니다.');
   });
+  section.querySelector('[data-action=optimize]').addEventListener('click', () => optimizeLineup(side));
 }
 
 function setLineup(side, slots, starter) {
@@ -298,6 +300,64 @@ async function run(mode, button) {
   } finally {
     document.querySelectorAll('.actions button').forEach(b => b.disabled = false);
   }
+}
+
+// ---------- 최적 라인업 추천 ----------
+async function optimizeLineup(side) {
+  const result = document.getElementById('result');
+  let body;
+  try {
+    body = { homeTeam: DATA.home.team, awayTeam: DATA.away.team, home: collect('home'), away: collect('away'), target: side };
+  } catch (e) {
+    result.innerHTML = `<div class="card alert-error">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  document.querySelectorAll('.team-actions button, .actions button').forEach(b => b.disabled = true);
+  result.innerHTML = '<div class="card">최적 라인업 계산 중...</div>';
+  try {
+    const response = await fetch('/simulation/optimize', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || '서버 오류');
+    result.innerHTML = renderOptimize(side, data);
+    const applyBtn = document.getElementById('applyOptimizeBtn');
+    if (applyBtn) applyBtn.addEventListener('click', () => {
+      setLineup(side, data.recommended.lineup);
+      result.innerHTML = `<div class="card">${escapeHtml(SIDE_LABEL[side])}팀 라인업에 반영했습니다. "시나리오 분석"이나 "확정 예측"으로 다시 확인해 보세요.</div>`;
+    });
+  } catch (e) {
+    result.innerHTML = `<div class="card alert-error">오류: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    document.querySelectorAll('.team-actions button, .actions button').forEach(b => b.disabled = false);
+  }
+}
+
+function renderOptimize(side, r) {
+  const team = DATA[side].team;
+  if (!r.changes.length) {
+    return `<div class="card">
+      <h3 class="card-title">최적 라인업 추천 — ${escapeHtml(team)}</h3>
+      <p>지금 입력한 라인업이 이미 거의 최적입니다 (벤치 교체로 승률을 올릴 자리를 찾지 못했습니다).</p>
+    </div>`;
+  }
+  const rows = r.changes.map(c => `
+    <tr><td>${c.order}번 ${escapeHtml(c.pos)}</td><td>${escapeHtml(c.from)} → ${escapeHtml(c.to)}</td>
+      <td class="num">${c.delta_runs >= 0 ? '+' : ''}${c.delta_runs.toFixed(3)}</td>
+      <td class="num up">${pp(c.delta_win)}</td></tr>`).join('');
+  return `
+    <div class="card">
+      <h3 class="card-title">최적 라인업 추천 — ${escapeHtml(team)} <span class="muted">(${r.games.toLocaleString()}경기 검증)</span></h3>
+      <p>현재 라인업 승률 <b>${pct(r.current.win)}</b> → 추천 라인업 승률 <b>${pct(r.recommended.win)}</b>
+        <span class="${r.verified_improvement >= 0 ? 'up' : 'down'}">(${pp(r.verified_improvement)})</span></p>
+      <div class="table-wrap"><table class="table effects">
+        <tr><th>자리</th><th>교체</th><th class="num">득점 변화</th><th class="num">승률 기여</th></tr>
+        ${rows}
+      </table></div>
+      <button class="btn btn-primary btn-sm" id="applyOptimizeBtn" type="button" style="margin-top:10px">추천 라인업 적용</button>
+      <p class="muted" style="margin-top:8px">계산으로 추정한 효과를 시뮬레이션으로 검증한 결과입니다 (± 노이즈 있음). 적용 후에는 반드시 "시나리오 분석" 또는
+        "확정 예측"으로 다시 확인하세요 — 결과를 그대로 기록하지 않습니다.</p>
+    </div>
+    ${renderWarnings(r.warnings)}`;
 }
 
 // ---------- 예측 기록 ----------
