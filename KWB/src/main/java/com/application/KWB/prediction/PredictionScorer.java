@@ -44,7 +44,11 @@ public final class PredictionScorer {
 	public record Summary(int games, int correct, double accuracy, double brier, double logLoss, double brierSkill) {
 	}
 
-	public record Report(Map<String, Summary> summaries, List<Entry> entries) {
+	/**
+	 * @param summaries 경기 시작 전 가장 늦은 기록만 채점한 지표 (헤드라인 적중률, 사후 끼워맞추기 방지)
+	 * @param inclusiveSummaries 경기·단계당 가장 최근 기록(사전/사후 불문)을 채점한 지표 (참고용, 사후 기록 포함)
+	 */
+	public record Report(Map<String, Summary> summaries, Map<String, Summary> inclusiveSummaries, List<Entry> entries) {
 	}
 
 	private PredictionScorer() {
@@ -57,13 +61,17 @@ public final class PredictionScorer {
 			if (!row.getCreatedAt().isBefore(startOf(row))) {
 				continue;
 			}
-			latestBeforeStart.merge(key(row), row,
-				(a, b) -> a.getCreatedAt().isAfter(b.getCreatedAt()) || (a.getCreatedAt().equals(b.getCreatedAt())
-					&& a.getId() > b.getId()) ? a : b);
+			latestBeforeStart.merge(key(row), row, PredictionScorer::newer);
+		}
+		// 경기·단계별로 시점 상관없이 가장 늦은 기록을 고른다 (사후 기록 포함 지표용)
+		Map<String, PredictionRow> latestOverall = new HashMap<>();
+		for (PredictionRow row : rows) {
+			latestOverall.merge(key(row), row, PredictionScorer::newer);
 		}
 
 		List<Entry> entries = new ArrayList<>();
 		Map<String, List<Entry>> scoredByStage = new LinkedHashMap<>();
+		Map<String, List<Entry>> inclusiveScoredByStage = new LinkedHashMap<>();
 		for (PredictionRow row : rows.stream()
 				.sorted(Comparator.comparing(PredictionRow::getGameDate).thenComparing(PredictionRow::getCreatedAt).reversed())
 				.toList()) {
@@ -72,8 +80,22 @@ public final class PredictionScorer {
 			if (entry.status() == Status.SCORED) {
 				scoredByStage.computeIfAbsent(row.getStage(), s -> new ArrayList<>()).add(entry);
 			}
+
+			PredictionRow chosenOverall = latestOverall.get(key(row));
+			if (chosenOverall != null && chosenOverall.getId() == row.getId()) {
+				Entry inclusiveEntry = scoreOutcome(row);
+				if (inclusiveEntry.status() == Status.SCORED) {
+					inclusiveScoredByStage.computeIfAbsent(row.getStage(), s -> new ArrayList<>()).add(inclusiveEntry);
+				}
+			}
 		}
 
+		Map<String, Summary> summaries = summarizeByStage(scoredByStage);
+		Map<String, Summary> inclusiveSummaries = summarizeByStage(inclusiveScoredByStage);
+		return new Report(summaries, inclusiveSummaries, entries);
+	}
+
+	private static Map<String, Summary> summarizeByStage(Map<String, List<Entry>> scoredByStage) {
 		Map<String, Summary> summaries = new LinkedHashMap<>();
 		for (String stage : List.of("analyze", "predict")) {
 			List<Entry> scored = scoredByStage.getOrDefault(stage, List.of());
@@ -81,7 +103,12 @@ public final class PredictionScorer {
 				summaries.put(stage, summarize(scored));
 			}
 		}
-		return new Report(summaries, entries);
+		return summaries;
+	}
+
+	private static PredictionRow newer(PredictionRow a, PredictionRow b) {
+		return a.getCreatedAt().isAfter(b.getCreatedAt())
+			|| (a.getCreatedAt().equals(b.getCreatedAt()) && a.getId() > b.getId()) ? a : b;
 	}
 
 	private static Entry entryFor(PredictionRow row, PredictionRow chosen) {
@@ -91,6 +118,11 @@ public final class PredictionScorer {
 		if (chosen == null || chosen.getId() != row.getId()) {
 			return new Entry(row, Status.SUPERSEDED, null, null);
 		}
+		return scoreOutcome(row);
+	}
+
+	/** 시점(시작 전/후) 판정과 무관하게, 결과 대비 적중 여부·Brier 만 계산한다. */
+	private static Entry scoreOutcome(PredictionRow row) {
 		if (row.getHomeScore() == null || row.getAwayScore() == null) {
 			return new Entry(row, Status.NO_RESULT, null, null);
 		}
