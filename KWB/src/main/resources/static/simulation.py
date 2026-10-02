@@ -31,7 +31,7 @@ import random
 import sys
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -87,6 +87,14 @@ PB_REG_INN = 6000          # 팀 포일률 회귀 (이닝): 포일은 실책보�
 # 실제(0.97, calibrate_wp_pb.py)와 같아지도록 올렸다.
 WP_PB_SCALE = 2.3
 
+# 베이스러닝 진루 성향 (baserunning.csv 가 있을 때만): 주자가 몇 번 그 상황을 만났고(N) 그중 몇 %
+# 더 진루했는지를 리그 평균 쪽으로 회귀시켜, "리그 평균 대비 배수"로 advance_runners() 의 고정 확률에
+# 곱한다. 4가지만 다룬다 — H13(단타 때 1루주자 3루까지), H24(단타 때 2루주자 득점),
+# D14(2루타 때 1루주자 득점), G23(인플레이 아웃 때 2루주자 3루까지). 전부 "그 베이스에 있는 주자
+# 개인"의 성향이라, 타자 본인이 아니라 그 주자(Batter)를 찾아 적용한다.
+BASERUNNING_SITUATIONS = ("H13", "H24", "D14", "G23")
+BASERUNNING_REG = 20       # 회귀 강도 (기회 수 기준). 안타·2루타만큼 흔한 사건이 아니라 가볍게 잡음
+
 # 구장 요인 (games.csv 가 있을 때만): 팀의 홈경기 득점 ÷ 원정경기 득점 비율을 그 팀 홈구장의
 # 요인으로 보고, 안타 확률에 곱한다. 한 시즌 표본으로는 매우 불안정하므로(실제 여러 시즌을 섞어 쓰는
 # 것이 보통이다) 게임 수 기준으로 크게 회귀시킨다.
@@ -139,6 +147,7 @@ class Batter:
     hand: str = None         # R / L / S(양타)
     steal_attempt: float = 0.0  # 1루에 나가 2루가 비어 있을 때 도루를 시도할 확률
     steal_success: float = 0.0  # 리그 평균 수비 상대 도루 성공률
+    advance_factor: dict = field(default_factory=dict)  # 상황(BASERUNNING_SITUATIONS)별 리그 대비 진루 배수
 
 
 @dataclass
@@ -197,6 +206,11 @@ class Model:
         running = _read_csv(data_dir, "running.csv") if os.path.exists(os.path.join(data_dir, "running.csv")) else []
         self._running = {(r["Team"], r["Player"]): r for r in running}
         self.league_steal = _league_steal(hitters, self._running) if running else None
+        # 베이스러닝 진루 성향(baserunning.csv)도 선택: 없으면 전 선수 공통 고정 확률(리그 평균)로 계산
+        baserunning = (_read_csv(data_dir, "baserunning.csv")
+                      if os.path.exists(os.path.join(data_dir, "baserunning.csv")) else [])
+        self._baserunning = {(r["Team"], r["Player"]): r for r in baserunning}
+        self.league_baserunning = _league_baserunning(baserunning)
         # 경기 결과(games.csv)도 선택: 없으면 모든 팀이 구장 요인 없이(1.0) 계산
         games = _read_csv(data_dir, "games.csv") if os.path.exists(os.path.join(data_dir, "games.csv")) else []
         self.park_factors = _team_park_factors(games)
@@ -222,7 +236,9 @@ class Model:
         xb_obs = obs["xb"] if obs["xb"] is not None else lb["xb"]
         xb = _regress(xb_obs, obs["hits"], lb["xb"], XB_REG_HITS)
         running = self._running.get((row["Team"], row["Player"]))
-        return Batter((team, name), rates, splits, xb, hand, *self._steal_rates(row, running))
+        baserunning = self._baserunning.get((row["Team"], row["Player"]))
+        advance_factor = _batter_advance_factor(baserunning, self.league_baserunning)
+        return Batter((team, name), rates, splits, xb, hand, *self._steal_rates(row, running), advance_factor)
 
     def _steal_rates(self, row, running):
         """(시도 확률, 성공률). 데이터 폴더에 주루 기록이 없으면 도루하지 않는다.
@@ -593,6 +609,33 @@ def _league_steal(hitters, running):
     return {"attempt": sba / arrivals if arrivals else 0.0, "success": sb / sba if sba else 0.7}
 
 
+def _league_baserunning(rows):
+    """상황(BASERUNNING_SITUATIONS)별 리그 평균 진루율. baserunning.csv 가 없으면 빈 dict
+    (advance_runners() 는 빈 dict 를 만나면 고정 확률을 그대로 쓴다)."""
+    league = {}
+    for situation in BASERUNNING_SITUATIONS:
+        total_n = sum(_num(r, f"{situation}_n") or 0 for r in rows)
+        if total_n <= 0:
+            continue
+        made = sum((_num(r, f"{situation}_n") or 0) * (_num(r, f"{situation}_pct") or 0) / 100 for r in rows)
+        league[situation] = made / total_n
+    return league
+
+
+def _batter_advance_factor(row, league_baserunning):
+    """선수 한 명의 상황별 리그 대비 진루 배수. 기회 수(N)가 적으면 리그 평균(배수 1.0) 쪽으로 회귀된다."""
+    if row is None:
+        return {}
+    factor = {}
+    for situation, league_rate in league_baserunning.items():
+        n = _num(row, f"{situation}_n") or 0
+        pct = _num(row, f"{situation}_pct")
+        observed = pct / 100 if pct is not None else league_rate
+        rate = _regress(observed, n, league_rate, BASERUNNING_REG)
+        factor[situation] = rate / league_rate if league_rate else 1.0
+    return factor
+
+
 def _league_batter(rows):
     total = defaultdict(float)
     for r in rows:
@@ -716,7 +759,7 @@ def play_half_inning(model, offense, pitcher, rng, runs_to_win=None, reach_on_er
 def wild_pitch_advance(bases):
     """폭투·포일: 주자 전원 한 베이스씩 진루 (3루 주자는 득점). (득점, 새 주자 상태)"""
     first, second, third = bases
-    return int(bool(third)), [False, bool(first), bool(second)]
+    return int(bool(third)), [False, first, second]
 
 
 def attempt_steal(runner, bases, outs, rng, steal_odds=1.0):
@@ -730,10 +773,17 @@ def attempt_steal(runner, bases, outs, rng, steal_odds=1.0):
     return [False, False, bases[2]], outs + 1
 
 
+def _advance_factor(runner, situation):
+    """주자의 상황별(BASERUNNING_SITUATIONS) 리그 대비 진루 배수. 기록 없는 선수·테스트용 단순 True 면
+    1.0(고정 확률 그대로)."""
+    return getattr(runner, "advance_factor", {}).get(situation, 1.0)
+
+
 def advance_runners(outcome, bases, outs, rng, reach_on_error=P_REACH_ON_ERROR, batter=True):
-    """(득점, 새 주자 상태, 아웃 수). 1루에 나간 타자는 batter 로 표시한다 (도루 시도에 쓴다)."""
+    """(득점, 새 주자 상태, 아웃 수). 주자 자리에는 "누가 있는지"뿐 아니라 그 선수(Batter, 테스트에서는
+    단순 True)를 그대로 들고 다닌다 — 다음 타석에서도 그 주자 개인의 진루 성향(advance_factor)을
+    찾아 쓰기 위함이다. 1루에 나간 타자는 batter 로 표시한다 (도루 시도에도 쓴다)."""
     first, second, third = bases
-    second, third = bool(second), bool(third)  # 누가 있는지는 도루하는 1루 주자만 필요하다
     if outcome == "k":
         return 0, bases, outs + 1
 
@@ -745,50 +795,50 @@ def advance_runners(outcome, bases, outs, rng, reach_on_error=P_REACH_ON_ERROR, 
 
     if outcome == "out":
         if rng.random() < reach_on_error:
-            return int(third), [batter, first, second], outs
+            return int(bool(third)), [batter, first, second], outs
         if first and outs < 2 and rng.random() < P_DOUBLE_PLAY:
             outs += 2
             runs = 1 if third and outs < 3 else 0
-            return runs, [False, second, third and not runs], outs
+            return runs, [False, second, third if not runs else False], outs
         outs += 1
         runs = 0
         if outs < 3:
             if third and rng.random() < P_SAC_FLY:
                 runs, third = 1, False
-            if second and not third and rng.random() < P_OUT_2B_TO_3B:
-                second, third = False, True
+            if second and not third and rng.random() < min(P_OUT_2B_TO_3B * _advance_factor(second, "G23"), 0.95):
+                second, third = False, second
         return runs, [first, second, third], outs
 
     if outcome == "single":
-        runs = int(third)
+        runs = int(bool(third))
         new = [batter, False, False]
         if second:
-            if rng.random() < P_SINGLE_2B_SCORES[two_out]:
+            if rng.random() < min(P_SINGLE_2B_SCORES[two_out] * _advance_factor(second, "H24"), 0.95):
                 runs += 1
             else:
-                new[2] = True
+                new[2] = second
         if first:
-            if not new[2] and rng.random() < P_SINGLE_1B_TO_3B[two_out]:
-                new[2] = True
+            if not new[2] and rng.random() < min(P_SINGLE_1B_TO_3B[two_out] * _advance_factor(first, "H13"), 0.95):
+                new[2] = first
             else:
-                new[1] = True
+                new[1] = first
         return runs, new, outs
 
     if outcome == "double":
-        runs = int(third) + int(second)
-        new = [False, True, False]
+        runs = int(bool(third)) + int(bool(second))
+        new = [False, batter, False]
         if first:
-            if rng.random() < P_DOUBLE_1B_SCORES[two_out]:
+            if rng.random() < min(P_DOUBLE_1B_SCORES[two_out] * _advance_factor(first, "D14"), 0.95):
                 runs += 1
             else:
-                new[2] = True
+                new[2] = first
         return runs, new, outs
 
     if outcome == "triple":
-        return bool(first) + second + third, [False, False, True], outs
+        return int(bool(first)) + int(bool(second)) + int(bool(third)), [False, False, batter], outs
 
     if outcome == "homerun":
-        return 1 + bool(first) + second + third, [False, False, False], outs
+        return 1 + int(bool(first)) + int(bool(second)) + int(bool(third)), [False, False, False], outs
 
     raise ValueError(f"알 수 없는 결과: {outcome}")
 
