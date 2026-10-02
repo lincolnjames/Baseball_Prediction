@@ -195,6 +195,27 @@ def swap_lineup(plan, slot, batter):
     return replace(plan, lineup=lineup)
 
 
+def optimize_batting_order(lineup, values, win_per_run):
+    """lineup 의 인선(9명·포지션)은 그대로 두고 타순만 재배열한다. values[i] 는 lineup[i] 가 상대
+    투수진을 상대로 갖는 타석당 득점 가치(run_value) — 호출자가 이미 계산해 둔 값을 넘긴다(여기서
+    다시 계산하지 않는다).
+    이 모델에서 선수가 타순에 기여하는 득점 가치는 run_value(선수) × PA_BY_ORDER[타순] 이고,
+    PA_BY_ORDER 는 1번 타순이 가장 많은 타석을 보장하는 고정 수열이므로, run_value 가 큰 선수부터
+    타석이 많은 자리에 배정하는 정렬이 두 수열의 곱의 합을 최대화한다(재배열 부등식) — 9! 탐색이나
+    국소 탐색 없이 바로 전역 최적이다."""
+    order = sorted(range(len(lineup)), key=lambda i: -values[i])
+    new_lineup = [lineup[old_slot] for old_slot in order]
+    changes = []
+    for new_slot, old_slot in enumerate(order):
+        if new_slot == old_slot:
+            continue
+        delta_runs = values[old_slot] * (PA_BY_ORDER[new_slot] - PA_BY_ORDER[old_slot])
+        changes.append({"name": lineup[old_slot]["name"], "pos": lineup[old_slot]["pos"],
+                        "from_order": old_slot + 1, "to_order": new_slot + 1,
+                        "delta_runs": delta_runs, "delta_win": delta_runs * win_per_run})
+    return new_lineup, changes
+
+
 def analyze(args):
     started = time.time()
     data_dir = args.get("data_dir") or sim.DATA_DIR
@@ -302,37 +323,59 @@ def optimize(args):
     # roster.candidates() 는 포지션 기록이 전혀 없는 데이터(has_positions=False)에서 타석 수만으로
     # 후보를 고르는데, 그건 "효과를 보여주기만" 하는 analyze() 에선 괜찮지만 실제로 포지션을 맡기라고
     # 추천하는 여기서는 위험하다 (한 포지션만 뛰어본 선수를 안 뛰어본 자리로 추천할 수 있음).
-    slot_options = []  # [(slot_index, candidate_name, delta_win, runs_delta), ...]
+    current_values = [run_value(model, plans[target].lineup[i], opponent)
+                      for i in range(len(specs[target]["lineup"]))]
+
+    slot_options = []  # [(slot_index, candidate_name, delta_win, candidate_value), ...]
     for i, s in enumerate(specs[target]["lineup"]):
-        current = run_value(model, plans[target].lineup[i], opponent)
+        current = current_values[i]
         for name, _weight in roster.candidates(team, s["pos"], names):
             if s["pos"] != DH and roster.gs[(team, name)].get(s["pos"], 0) <= 0:
                 continue
-            runs_delta = (run_value(model, model.batter(team, name), opponent) - current) * PA_BY_ORDER[i]
-            delta_win = runs_delta * win_per_run
+            candidate_value = run_value(model, model.batter(team, name), opponent)
+            # 타순이 재배열되기 전이므로, 어떤 교체가 이득인지 가리는 용도로만 원래 타순(PA_BY_ORDER[i])
+            # 가중치를 쓴다 — 실제 보고되는 득점·승률 효과는 아래에서 최종 타순 기준으로 다시 계산한다.
+            delta_win = (candidate_value - current) * PA_BY_ORDER[i] * win_per_run
             if delta_win > 0:
-                slot_options.append((i, name, delta_win, runs_delta))
+                slot_options.append((i, name, delta_win, candidate_value))
 
     # 전역 그리디 배정: 효과가 큰 순서로, 자리·선수가 아직 안 쓰였으면 배정한다
     # (같은 벤치 선수가 여러 포지션의 후보로 겹치는 경우의 충돌을 막기 위함)
     slot_options.sort(key=lambda o: -o[2])
     assigned = {}
     used_names = set()
-    for slot_index, name, delta_win, runs_delta in slot_options:
+    for slot_index, name, delta_win, candidate_value in slot_options:
         if slot_index in assigned or name in used_names:
             continue
-        assigned[slot_index] = (name, delta_win, runs_delta)
+        assigned[slot_index] = (name, candidate_value)
         used_names.add(name)
 
-    recommended_lineup, changes = [], []
+    recommended_lineup, recommended_values = [], []
     for i, s in enumerate(specs[target]["lineup"]):
         if i in assigned:
-            name, delta_win, runs_delta = assigned[i]
+            name, candidate_value = assigned[i]
             recommended_lineup.append({"name": name, "pos": s["pos"]})
-            changes.append({"order": i + 1, "pos": s["pos"], "from": s["name"], "to": name,
-                            "delta_runs": runs_delta, "delta_win": delta_win})
+            recommended_values.append(candidate_value)
         else:
             recommended_lineup.append({"name": s["name"], "pos": s["pos"]})
+            recommended_values.append(current_values[i])
+
+    # 인선이 정해진 뒤, 같은 9명으로 타순(배팅 오더)만 승률이 최대화되도록 재배열한다. run_value 는
+    # 이미 위에서 다 계산해 뒀으므로(current_values/recommended_values) 여기서 다시 계산하지 않는다.
+    recommended_lineup, order_changes = optimize_batting_order(
+        recommended_lineup, recommended_values, win_per_run)
+
+    # 교체 효과는 그 선수가 최종적으로 서는 타순(재배열 반영) 기준으로 보고한다 — "교체" 표와
+    # "타순 재배열" 표가 서로 다른 타순을 전제로 숫자를 보여주면 두 표를 맞춰 보기 어렵다.
+    final_slot = {s["name"]: j for j, s in enumerate(recommended_lineup)}
+    changes = []
+    for i, s in enumerate(specs[target]["lineup"]):
+        if i in assigned:
+            name, candidate_value = assigned[i]
+            j = final_slot[name]
+            runs_delta = (candidate_value - current_values[i]) * PA_BY_ORDER[j]
+            changes.append({"order": j + 1, "pos": s["pos"], "from": s["name"], "to": name,
+                            "delta_runs": runs_delta, "delta_win": runs_delta * win_per_run})
 
     recommended_spec = dict(specs[target])
     recommended_spec["lineup"] = recommended_lineup
@@ -358,6 +401,7 @@ def optimize(args):
         "current": {"win": current_win, "runs": target_runs(current_result)},
         "recommended": {"win": recommended_win, "runs": target_runs(recommended_result), "lineup": recommended_lineup},
         "changes": changes,
+        "order_changes": order_changes,
         "verified_improvement": recommended_win - current_win,
         "games": GAMES_OPTIMIZE,
         "positions_available": roster.has_positions,
