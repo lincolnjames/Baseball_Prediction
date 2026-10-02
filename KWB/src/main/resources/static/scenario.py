@@ -195,6 +195,26 @@ def swap_lineup(plan, slot, batter):
     return replace(plan, lineup=lineup)
 
 
+def optimize_batting_order(model, team, lineup, opponent, win_per_run):
+    """lineup 의 인선(9명·포지션)은 그대로 두고 타순만 재배열한다.
+    이 모델에서 선수가 타순에 기여하는 득점 가치는 run_value(선수) × PA_BY_ORDER[타순] 이고,
+    PA_BY_ORDER 는 1번 타순이 가장 많은 타석을 보장하는 고정 수열이므로, run_value 가 큰 선수부터
+    타석이 많은 자리에 배정하는 정렬이 두 수열의 곱의 합을 최대화한다(재배열 부등식) — 9! 탐색이나
+    국소 탐색 없이 바로 전역 최적이다."""
+    values = [run_value(model, model.batter(team, s["name"]), opponent) for s in lineup]
+    order = sorted(range(len(lineup)), key=lambda i: -values[i])
+    new_lineup = [lineup[old_slot] for old_slot in order]
+    changes = []
+    for new_slot, old_slot in enumerate(order):
+        if new_slot == old_slot:
+            continue
+        delta_runs = values[old_slot] * (PA_BY_ORDER[new_slot] - PA_BY_ORDER[old_slot])
+        changes.append({"name": lineup[old_slot]["name"], "pos": lineup[old_slot]["pos"],
+                        "from_order": old_slot + 1, "to_order": new_slot + 1,
+                        "delta_runs": delta_runs, "delta_win": delta_runs * win_per_run})
+    return new_lineup, changes
+
+
 def analyze(args):
     started = time.time()
     data_dir = args.get("data_dir") or sim.DATA_DIR
@@ -334,6 +354,10 @@ def optimize(args):
         else:
             recommended_lineup.append({"name": s["name"], "pos": s["pos"]})
 
+    # 인선이 정해진 뒤, 같은 9명으로 타순(배팅 오더)만 승률이 최대화되도록 재배열한다
+    recommended_lineup, order_changes = optimize_batting_order(
+        model, team, recommended_lineup, opponent, win_per_run)
+
     recommended_spec = dict(specs[target])
     recommended_spec["lineup"] = recommended_lineup
     recommended_plan = build_plan(model, roster, recommended_spec)
@@ -358,6 +382,7 @@ def optimize(args):
         "current": {"win": current_win, "runs": target_runs(current_result)},
         "recommended": {"win": recommended_win, "runs": target_runs(recommended_result), "lineup": recommended_lineup},
         "changes": changes,
+        "order_changes": order_changes,
         "verified_improvement": recommended_win - current_win,
         "games": GAMES_OPTIMIZE,
         "positions_available": roster.has_positions,

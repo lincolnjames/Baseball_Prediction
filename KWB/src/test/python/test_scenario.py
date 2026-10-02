@@ -195,6 +195,59 @@ class OptimizeTest(unittest.TestCase):
         self.assertGreaterEqual(second["recommended"]["win"], second["current"]["win"] - 0.03)
 
 
+class BattingOrderOptimizeTest(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.model = sim.Model(STATIC_DIR)
+        roster = sc.Roster(STATIC_DIR)
+        cls.plans = {side: sc.build_plan(cls.model, roster, team(name, lineup, starter))
+                     for side, (name, lineup, starter) in
+                     {"home": ("LG", LG, "임찬규"), "away": ("KT", KT, "고영표")}.items()}
+        cls.lineup = [{"name": n, "pos": p} for n, p in LG]
+        cls.opponent = cls.plans["away"]
+
+    def values(self, lineup):
+        return [sc.run_value(self.model, self.model.batter("LG", s["name"]), self.opponent) for s in lineup]
+
+    def test_result_keeps_same_nine_players_sorted_by_run_value_descending(self):
+        new_lineup, _changes = sc.optimize_batting_order(self.model, "LG", self.lineup, self.opponent, 0.001)
+        self.assertEqual({s["name"] for s in new_lineup}, {n for n, _ in LG})
+        values = self.values(new_lineup)
+        self.assertEqual(values, sorted(values, reverse=True))
+
+    def test_changes_sum_to_the_total_run_value_shift(self):
+        win_per_run = 0.001
+        new_lineup, changes = sc.optimize_batting_order(self.model, "LG", self.lineup, self.opponent, win_per_run)
+        before = self.values(self.lineup)
+        after = self.values(new_lineup)
+        expected_total = (sum(v * pa for v, pa in zip(after, sc.PA_BY_ORDER))
+                          - sum(v * pa for v, pa in zip(before, sc.PA_BY_ORDER)))
+        self.assertAlmostEqual(sum(c["delta_runs"] for c in changes), expected_total)
+        for c in changes:
+            self.assertAlmostEqual(c["delta_win"], c["delta_runs"] * win_per_run)
+
+    def test_already_sorted_lineup_produces_no_changes(self):
+        sorted_lineup, _ = sc.optimize_batting_order(self.model, "LG", self.lineup, self.opponent, 0.001)
+        _again, changes = sc.optimize_batting_order(self.model, "LG", sorted_lineup, self.opponent, 0.001)
+        self.assertEqual(changes, [])
+
+    def test_optimize_reports_order_changes_with_valid_slots(self):
+        r = sc.optimize(args(target="home"))
+        self.assertIn("order_changes", r)
+        for c in r["order_changes"]:
+            self.assertNotEqual(c["from_order"], c["to_order"])
+            self.assertIn(c["from_order"], range(1, 10))
+            self.assertIn(c["to_order"], range(1, 10))
+
+    def test_reapplying_recommendation_leaves_batting_order_unchanged(self):
+        first = sc.optimize(args(target="home"))
+        second_args = args(target="home")
+        second_args["home"]["lineup"] = first["recommended"]["lineup"]
+        second = sc.optimize(second_args)
+        self.assertEqual(second["order_changes"], [])
+
+
 class PredictTest(unittest.TestCase):
 
     def test_predict_returns_single_probability(self):
