@@ -14,9 +14,11 @@ sys.path.insert(0, os.path.abspath(STATIC_DIR))
 import simulation as sim  # noqa: E402
 
 
-def player(key, outcome="k", starter_innings=9, steal_attempt=0.0, steal_success=0.0, wp_factor=1.0):
+def player(key, outcome="k", starter_innings=9, steal_attempt=0.0, steal_success=0.0, wp_factor=1.0,
+           advance_factor=None):
     return SimpleNamespace(key=key, outcome=outcome, starter_innings=starter_innings,
-                           steal_attempt=steal_attempt, steal_success=steal_success, wp_factor=wp_factor)
+                           steal_attempt=steal_attempt, steal_success=steal_success, wp_factor=wp_factor,
+                           advance_factor=advance_factor or {})
 
 
 class ScriptedModel:
@@ -110,6 +112,53 @@ class BaseRunningTest(unittest.TestCase):
         never = sim.advance_runners("out", [False, False, False], 0, random.Random(0), reach_on_error=0.0)
         self.assertEqual(always, (1, [True, False, False], 0))
         self.assertEqual(never, (0, [False, False, False], 1))
+
+    def test_runner_identity_is_preserved_across_advances(self):
+        # 1루 주자가 단타로 2루 또는 3루까지 가면, 거기 남는 건 "진루 여부"가 아니라 "그 선수 본인"이어야
+        # 다음 타석에서 그 선수의 advance_factor 를 찾을 수 있다 (어느 베이스로 갔는지는 확률적이라 무관).
+        first_runner = player("r1")
+        _runs, bases, _outs = self.advance("single", [first_runner, False, False])
+        self.assertIn(first_runner, bases)
+
+    def test_fast_runner_scores_from_second_on_a_single_more_often(self):
+        fast = player("fast", advance_factor={"H24": 3.0})
+        slow = player("slow", advance_factor={"H24": 0.1})
+        rng = random.Random(1)
+        fast_scores = sum(sim.advance_runners("single", [False, fast, False], 0, rng)[0] for _ in range(3000))
+        slow_scores = sum(sim.advance_runners("single", [False, slow, False], 0, rng)[0] for _ in range(3000))
+        self.assertGreater(fast_scores, slow_scores)
+
+    def test_fast_runner_advances_from_first_to_third_on_a_single_more_often(self):
+        fast = player("fast", advance_factor={"H13": 3.0})
+        slow = player("slow", advance_factor={"H13": 0.1})
+        rng = random.Random(1)
+
+        def reaches_third(runner):
+            _runs, bases, _outs = sim.advance_runners("single", [runner, False, False], 0, rng)
+            return bases[2] is runner
+
+        fast_thirds = sum(reaches_third(fast) for _ in range(3000))
+        slow_thirds = sum(reaches_third(slow) for _ in range(3000))
+        self.assertGreater(fast_thirds, slow_thirds)
+
+    def test_fast_runner_advances_from_second_to_third_on_a_ground_out_more_often(self):
+        fast = player("fast", advance_factor={"G23": 3.0})
+        slow = player("slow", advance_factor={"G23": 0.1})
+        rng = random.Random(1)
+
+        def reaches_third(runner):
+            _runs, bases, _outs = sim.advance_runners("out", [False, runner, False], 0, rng, reach_on_error=0.0)
+            return bases[2] is runner
+
+        fast_thirds = sum(reaches_third(fast) for _ in range(3000))
+        slow_thirds = sum(reaches_third(slow) for _ in range(3000))
+        self.assertGreater(fast_thirds, slow_thirds)
+
+    def test_factor_is_capped_so_probability_cannot_exceed_one(self):
+        # advance_factor 가 아주 커도(예: 데이터 입력 실수) 확률이 1을 넘어 rng 비교가 무의미해지면 안 된다
+        reckless = player("r", advance_factor={"H24": 100.0})
+        runs, _bases, _outs = sim.advance_runners("single", [False, reckless, False], 0, random.Random(0))
+        self.assertEqual(runs, 1)  # 득점은 하되, 예외 없이 정상 동작
 
     def test_fielding_team_error_rate_is_used_for_opponent_half_innings(self):
         used = []
@@ -273,6 +322,41 @@ class TeamFieldingTest(unittest.TestCase):
         model = sim.Model()
         self.assertEqual(model.reach_on_error("LG"), sim.P_REACH_ON_ERROR)
         self.assertEqual(model.warnings, [])
+
+
+class BaserunningDataTest(unittest.TestCase):
+
+    def folder_with(self, baserunning_csv):
+        folder = tempfile.mkdtemp()
+        for name in ("hitters.csv", "pitchers.csv"):
+            shutil.copy(os.path.join(STATIC_DIR, name), folder)
+        with open(os.path.join(folder, "baserunning.csv"), "w", encoding="utf-8") as f:
+            f.write(baserunning_csv)
+        return folder
+
+    def test_player_with_data_gets_a_factor_regressed_toward_league_average(self):
+        # 리그 평균 H24 = (10*0.80 + 10*0.20) / 20 = 0.50. 발 빠른 선수(관측 0.80, 기회 10회)는
+        # 표본이 적어 회귀되지만, 그래도 느린 선수보다는 배수가 커야 한다.
+        folder = self.folder_with(
+            "Year,Team,Player,H24_n,H24_pct\n"
+            "2026,LG,박동원,10,80.0\n"
+            "2026,LG,오스틴,10,20.0\n")
+        model = sim.Model(folder)
+        fast = model.batter("LG", "박동원")
+        slow = model.batter("LG", "오스틴")
+        self.assertGreater(fast.advance_factor["H24"], 1.0)
+        self.assertLess(slow.advance_factor["H24"], 1.0)
+        self.assertGreater(fast.advance_factor["H24"], slow.advance_factor["H24"])
+
+    def test_player_without_a_row_gets_the_default_factor(self):
+        folder = self.folder_with("Year,Team,Player,H24_n,H24_pct\n2026,LG,박동원,10,80.0\n")
+        model = sim.Model(folder)
+        self.assertEqual(model.batter("LG", "오스틴").advance_factor, {})
+
+    def test_without_baserunning_csv_every_batter_uses_the_fixed_probability(self):
+        model = sim.Model()  # 저장소 기본 데이터엔 baserunning.csv 없음
+        self.assertEqual(model.batter("LG", "박동원").advance_factor, {})
+        self.assertEqual(model.league_baserunning, {})
 
 
 class WildPitchTest(unittest.TestCase):
