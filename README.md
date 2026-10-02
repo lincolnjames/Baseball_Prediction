@@ -1,5 +1,7 @@
 # KWB - KBO 경기 승부 예측
 
+> **English summary**: A full-stack web app (Spring Boot + MyBatis + MySQL backend, Thymeleaf/vanilla-JS frontend) that predicts KBO (Korean Baseball Organization) game outcomes via Monte Carlo simulation in Python. Player stats feed a pitch-by-pitch simulation (odds-ratio batter/pitcher matchups, platoon splits, sample-size regression, park factors, errors, steals, wild pitches) to estimate win probability and expected runs for a given lineup. It also recommends lineup changes — both bench swaps and batting-order reshuffling — and verifies each recommendation with its own simulation run. Backtested against 468 real 2025-season games: **57.9% accuracy**, in line with the ~55–58% ceiling cited for MLB-style pregame models (e.g. FiveThirtyEight), with results reported honestly including confidence intervals. No scraping: 2026-season data is hand-copied from KBO's official site per their terms, verified by cross-checking derived stats (batting average, ERA, etc.) against the raw box-score numbers. See below for details (Korean).
+
 KBO 경기 일정을 보고, 양 팀 라인업(타순 9명 + 선발·중간계투·마무리)을 골라 몬테카를로 시뮬레이션으로 승률과 평균 득점을 예측하는 웹 애플리케이션입니다.
 
 - **백엔드**: Spring Boot 3.4 / MyBatis / MySQL
@@ -138,6 +140,15 @@ py -m unittest discover -s KWB/src/test/python
 2. **확정 예측 (라인업 발표 후)**: 발표된 실제 라인업으로 1만 경기를 시뮬레이션합니다.
 
 불펜은 세이브 1위를 마무리로, 홀드 상위 3명을 중간계투로 자동 구성합니다. 입력한 라인업은 브라우저에 팀별로 저장돼 "최근 입력 불러오기"로 다시 쓸 수 있습니다.
+
+### 최적 라인업 추천
+
+각 팀 라인업 카드의 **"최적 라인업 추천"** 버튼은 입력한 라인업에서 승률을 올릴 수 있는 변경을 두 단계로 찾아 보여줍니다.
+
+1. **인선(포지션별 교체)**: 벤치에서 그 포지션을 실제로 맡아본 선수(수비 기록의 선발 출장 GS>0)로 바꿨을 때의 효과를, 위 "교체 효과를 계산으로 구하는 방법"과 같은 방식으로 계산해 전역 그리디로 승률을 최대화하는 조합을 고릅니다.
+2. **타순(배팅 오더) 재배열**: 정해진 9명을 상대 선발·불펜 기준 타석당 득점 가치(OBP·SLG 가중)가 높은 순으로 재배열합니다. 타순별 평균 타석 수가 1번이 가장 많도록 고정된 수열이라, 이 정렬이 재배열 부등식에 의해 바로 전역 최적입니다(9! 전체 탐색이나 국소 탐색이 필요 없습니다).
+
+추천 결과는 현재 라인업과 같은 seed로 비교 시뮬레이션해 검증한 뒤 보여주며, **"추천 라인업 적용"**으로 반영한 다음에는 "시나리오 분석"이나 "확정 예측"으로 다시 확인해야 합니다(추천 화면 자체는 결과를 기록하지 않습니다).
 
 **표 붙여넣기로 채우기**: 각 팀 라인업 카드 아래 접이식 상자에, 다른 사이트에서 복사한 타순표나 경기 기록(박스스코어)을 붙여넣으면 로스터 이름과 일치하는 선수를 찾아 타순·선발투수를 자동으로 채웁니다. 열 순서는 상관없고, 포지션은 정식 명칭("좌익수")이든 한 글자·한자 숫자 약자("좌", "一"=1루)든 인식합니다. 경기 기록처럼 같은 타순에 교체 선수가 같이 나오면 먼저 나온 선발 줄만 쓰고, "타三"(대타 후 3루)처럼 포지션이 두 글자로 붙어 있으면 첫 글자(경기를 시작한 포지션)를 씁니다. 이미 끝난 경기를 실제 라인업으로 검증할 때 유용합니다 — 다만 **경기일 입력칸은 자동으로 안 바뀌므로, 예측을 기록할 거면 그 경기의 실제 날짜로 직접 바꿔야** 합니다(안 바꾸면 다음 예정 경기 날짜로 기록돼 실제 예측 성적에 섞입니다).
 
