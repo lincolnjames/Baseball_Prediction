@@ -194,6 +194,14 @@ class OptimizeTest(unittest.TestCase):
         second = sc.optimize(second_args)
         self.assertGreaterEqual(second["recommended"]["win"], second["current"]["win"] - 0.03)
 
+    def test_change_order_matches_the_players_final_batting_slot(self):
+        # changes[].order 와 delta_runs 는 타순 재배열이 끝난 "최종" 자리를 기준으로 보고해야 한다 —
+        # 교체 당시의 원래 타순 기준이면 order_changes 표와 서로 다른 타순을 전제로 한 숫자가 된다.
+        r = sc.optimize(args(target="home"))
+        for c in r["changes"]:
+            final_index = next(i for i, s in enumerate(r["recommended"]["lineup"]) if s["name"] == c["to"])
+            self.assertEqual(c["order"], final_index + 1)
+
 
 class BattingOrderOptimizeTest(unittest.TestCase):
 
@@ -211,15 +219,15 @@ class BattingOrderOptimizeTest(unittest.TestCase):
         return [sc.run_value(self.model, self.model.batter("LG", s["name"]), self.opponent) for s in lineup]
 
     def test_result_keeps_same_nine_players_sorted_by_run_value_descending(self):
-        new_lineup, _changes = sc.optimize_batting_order(self.model, "LG", self.lineup, self.opponent, 0.001)
+        new_lineup, _changes = sc.optimize_batting_order(self.lineup, self.values(self.lineup), 0.001)
         self.assertEqual({s["name"] for s in new_lineup}, {n for n, _ in LG})
         values = self.values(new_lineup)
         self.assertEqual(values, sorted(values, reverse=True))
 
     def test_changes_sum_to_the_total_run_value_shift(self):
         win_per_run = 0.001
-        new_lineup, changes = sc.optimize_batting_order(self.model, "LG", self.lineup, self.opponent, win_per_run)
         before = self.values(self.lineup)
+        new_lineup, changes = sc.optimize_batting_order(self.lineup, before, win_per_run)
         after = self.values(new_lineup)
         expected_total = (sum(v * pa for v, pa in zip(after, sc.PA_BY_ORDER))
                           - sum(v * pa for v, pa in zip(before, sc.PA_BY_ORDER)))
@@ -228,8 +236,8 @@ class BattingOrderOptimizeTest(unittest.TestCase):
             self.assertAlmostEqual(c["delta_win"], c["delta_runs"] * win_per_run)
 
     def test_already_sorted_lineup_produces_no_changes(self):
-        sorted_lineup, _ = sc.optimize_batting_order(self.model, "LG", self.lineup, self.opponent, 0.001)
-        _again, changes = sc.optimize_batting_order(self.model, "LG", sorted_lineup, self.opponent, 0.001)
+        sorted_lineup, _ = sc.optimize_batting_order(self.lineup, self.values(self.lineup), 0.001)
+        _again, changes = sc.optimize_batting_order(sorted_lineup, self.values(sorted_lineup), 0.001)
         self.assertEqual(changes, [])
 
     def test_optimize_reports_order_changes_with_valid_slots(self):
