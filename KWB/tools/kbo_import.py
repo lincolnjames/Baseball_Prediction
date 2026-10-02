@@ -43,6 +43,7 @@ TABLES = {
 TEAMS = {"KIA", "KT", "LG", "NC", "SSG", "두산", "롯데", "삼성", "키움", "한화"}
 RATE_TOLERANCE = 0.0006    # 소수 셋째 자리 반올림 오차
 ERA_TOLERANCE = 0.006      # 소수 둘째 자리 반올림 오차
+COPY_TIME_WARNING_DAYS = 3  # 입력 파일들의 복사 시점이 이보다 더 벌어지면 경고 (차단하지 않음)
 
 HITTER_COLUMNS = ["Year", "Team", "Player", "G", "PA", "AB", "H", "2B", "3B", "HR", "BB", "HBP", "SO", "SF",
                   "AVG", "OBP", "SLG", "K%", "BB%"]
@@ -80,6 +81,26 @@ def innings_outs(text):
 
 def num(value):
     return None if value in ("-", "") else float(value)
+
+
+def check_copy_times(folder, threshold_days=COPY_TIME_WARNING_DAYS):
+    """입력 .txt 파일들의 수정 시각(mtime)이 서로 많이 벌어져 있으면 경고 메시지를 돌려준다.
+
+    일부 파일만 새로 복사하고 나머지는 오래 전 것을 그대로 두면, 투수 기록과 일정이 서로 다른
+    시점의 데이터라서 cross_check_wins() 의 "팀 승패 불일치" 같은 원인을 찾기 어려운 검증 오류로
+    이어지기 쉽다. 차단 에러가 아니라 참고용 경고다.
+    """
+    files = [f for f in os.listdir(folder) if f.endswith(".txt")]
+    if len(files) < 2:
+        return []
+    mtimes = [(f, os.path.getmtime(os.path.join(folder, f))) for f in files]
+    oldest_file, oldest_time = min(mtimes, key=lambda x: x[1])
+    newest_file, newest_time = max(mtimes, key=lambda x: x[1])
+    gap_days = (newest_time - oldest_time) / 86400
+    if gap_days < threshold_days:
+        return []
+    return [f"입력 파일들의 복사 시점이 {gap_days:.1f}일 차이납니다 ({oldest_file} vs {newest_file}) - "
+            "일부만 새로 복사했다면 승패 불일치 등 확인하기 어려운 오류의 원인이 될 수 있습니다."]
 
 
 def read_tables(folder):
@@ -441,6 +462,9 @@ def main():
     parser.add_argument("--out", help="CSV 출력 폴더 (기본: <입력 폴더>/out)")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
+
+    for message in check_copy_times(args.folder):
+        print(f"경고: {message}")
 
     hitters, pitchers, problems, renamed = build(args.folder, args.year)
 

@@ -69,6 +69,36 @@ class ParsingTest(unittest.TestCase):
         self.assertIn("열 개수", errors[0])
 
 
+class CopyTimeWarningTest(unittest.TestCase):
+
+    def set_mtime(self, folder, name, days_ago):
+        path = os.path.join(folder, name)
+        now = os.path.getmtime(path)
+        os.utime(path, (now - days_ago * 86400, now - days_ago * 86400))
+
+    def test_no_warning_when_files_were_copied_around_the_same_time(self):
+        folder = complete_folder()
+        self.assertEqual(ki.check_copy_times(folder), [])
+
+    def test_warns_when_one_file_is_much_older_than_the_rest(self):
+        folder = complete_folder()
+        self.set_mtime(folder, "p1.txt", days_ago=5)
+        warnings = ki.check_copy_times(folder)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("p1.txt", warnings[0])
+
+    def test_threshold_is_configurable(self):
+        folder = complete_folder()
+        self.set_mtime(folder, "p1.txt", days_ago=1)
+        self.assertEqual(ki.check_copy_times(folder), [])
+        warnings = ki.check_copy_times(folder, threshold_days=0.5)
+        self.assertEqual(len(warnings), 1)
+
+    def test_single_file_folder_has_nothing_to_compare(self):
+        folder = write_folder({"h1.txt": HITTER1})
+        self.assertEqual(ki.check_copy_times(folder), [])
+
+
 class VerificationTest(unittest.TestCase):
 
     def test_clean_data_passes_and_converts(self):
