@@ -1,13 +1,13 @@
 # KWB - KBO 경기 승부 예측
 
-> **English summary**: A full-stack web app (Spring Boot + MyBatis + MySQL backend, Thymeleaf/vanilla-JS frontend) that predicts KBO (Korean Baseball Organization) game outcomes via Monte Carlo simulation in Python. Player stats feed a pitch-by-pitch simulation (odds-ratio batter/pitcher matchups, platoon splits, sample-size regression, park factors, errors, steals, wild pitches) to estimate win probability and expected runs for a given lineup. It also recommends lineup changes — both bench swaps and batting-order reshuffling — and verifies each recommendation with its own simulation run. Backtested against 468 real 2025-season games: **57.9% accuracy**, in line with the ~55–58% ceiling cited for MLB-style pregame models (e.g. FiveThirtyEight), with results reported honestly including confidence intervals. No scraping: 2026-season data is hand-copied from KBO's official site per their terms, verified by cross-checking derived stats (batting average, ERA, etc.) against the raw box-score numbers. See below for details (Korean).
+> **English summary**: A full-stack web app (Spring Boot + MyBatis + MySQL backend, Thymeleaf/vanilla-JS frontend) that predicts KBO (Korean Baseball Organization) game outcomes via Monte Carlo simulation in Python. Player stats feed a pitch-by-pitch simulation (odds-ratio batter/pitcher matchups, platoon splits, sample-size regression, park factors, errors, steals, wild pitches) to estimate win probability and expected runs for a given lineup. It also recommends lineup changes — both bench swaps and batting-order reshuffling — and verifies each recommendation with its own simulation run. The repo ships a 2025-season baseline dataset, used for the backtest below (468 real games, **57.9% accuracy** — in line with the ~55–58% ceiling cited for MLB-style pregame models such as FiveThirtyEight, with results reported honestly including confidence intervals). Live predictions are kept current with 2026-season data, hand-copied from KBO's official site (no scraping, per their terms) and verified by cross-checking derived stats (batting average, ERA, etc.) against the raw box-score numbers before use. See below for details (Korean).
 
 KBO 경기 일정을 보고, 양 팀 라인업(타순 9명 + 선발·중간계투·마무리)을 골라 몬테카를로 시뮬레이션으로 승률과 평균 득점을 예측하는 웹 애플리케이션입니다.
 
 - **백엔드**: Spring Boot 3.4 / MyBatis / MySQL
 - **화면**: Thymeleaf + 순수 JS (외부 프론트엔드 라이브러리 없음), 공통 디자인 시스템(`static/css/kwb.css`)
 - **시뮬레이션**: Python (표준 라이브러리만 사용)
-- **데이터**: 2025 시즌 타자·투수 기록, 경기 일정 (CSV). 2026시즌은 사람이 직접 복사한 원시 기록(안타·볼넷 등 그대로)도 지원
+- **데이터**: 저장소에는 2025 시즌 타자·투수 기록·경기 일정(CSV)만 기본으로 들어 있고(백테스트도 이 데이터 기준), 실제 운영 중인 예측은 2026 시즌 데이터를 [`kbo_import.py`](KWB/tools/kbo_import.py)로 갱신해 사용합니다(사람이 직접 복사한 원시 기록, 안타·볼넷 등 그대로 — 아래 "최신 시즌 기록 넣기" 참고)
 
 ## 실행 환경
 
